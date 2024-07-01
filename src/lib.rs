@@ -2,7 +2,7 @@
 //!
 //! The library attempts to provide many of the common features found in roguelikes, such as stairs, teleporters, items, enemies and traps. It is intended to be used as a base upon which a fully featured game can be built on.
 
-use image::{imageops::overlay, open, ImageError, RgbImage, Rgb};
+use image::{imageops::overlay, open, ImageError, Rgb, RgbImage};
 use itertools::Itertools;
 use noise::{NoiseFn, Perlin};
 use rand::distributions::WeightedIndex;
@@ -569,12 +569,16 @@ impl Dungeon {
             Rgb([255, 255, 255]),
         );
 
-        let images: Vec<_> = (0..self.floors.len()).collect::<Vec<_>>().par_iter().map(|i| {
-            let col = *i as u32 % cols;
-            let row = *i as u32 / cols;
-            let floor_image = self.floor_to_image(*i);
-            (col, row, floor_image)
-        }).collect();
+        let images: Vec<_> = (0..self.floors.len())
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|i| {
+                let col = *i as u32 % cols;
+                let row = *i as u32 / cols;
+                let floor_image = self.floor_to_image(*i);
+                (col, row, floor_image)
+            })
+            .collect();
 
         for (col, row, floor_image) in images {
             overlay(
@@ -644,9 +648,7 @@ impl Dungeon {
         for x in 0..width {
             for y in 0..height {
                 match floor.tiles[x as usize][y as usize] {
-                    Tile::Floor => {
-                        overlay(&mut img, &floor_tile_image, x as i64 * 8, y as i64 * 8)
-                    }
+                    Tile::Floor => overlay(&mut img, &floor_tile_image, x as i64 * 8, y as i64 * 8),
                     Tile::Wall => overlay(&mut img, &wall_tile_image, x as i64 * 8, y as i64 * 8),
                 }
             }
@@ -1181,36 +1183,42 @@ fn generate_corridors<R: Rng>(
     max_corridor_size: u16,
     squareness: f32,
 ) -> FxHashMap<u16, CellRoom> {
-    let mut empty_cells: Vec<_> = cells(width, height)
-        .filter(|cell| !grid[cell.i as usize][cell.j as usize])
-        .collect();
-    empty_cells.shuffle(rng);
-
-    // Create a 1x1 square in random positions in the grid
-    let mut corridors: Vec<_> = empty_cells[0..empty_cells.len() / 8]
-        .iter()
-        .enumerate()
-        .map(|(i, cell)| CellRoom {
-            id: room_id + i as u16,
-            kind: RoomKind::Corridor,
-            cell: *cell,
-            width: 1,
-            height: 1,
-            connections: Vec::new(),
-        })
-        .collect();
-
+    let mut corridors = Vec::new();
     let mut iter = 0;
     loop {
+        // Every 10 iterations, add new 1x1 squares to random positions in the grid
+        if iter % 10 == 0 {
+            let mut empty_cells: Vec<_> = cells(width, height)
+                .filter(|cell| !grid[cell.i as usize][cell.j as usize])
+                .collect();
+            empty_cells.shuffle(rng);
+
+            let empty_cells = &empty_cells[0..cmp::max(empty_cells.len() / 8, 1)];
+
+            for cell in empty_cells {
+                grid[cell.i as usize][cell.j as usize] = true;
+            }
+
+            let len = corridors.len() as u16;
+            corridors.extend(empty_cells.iter().enumerate().map(|(i, cell)| CellRoom {
+                id: room_id + len + i as u16,
+                kind: RoomKind::Corridor,
+                cell: *cell,
+                width: 1,
+                height: 1,
+                connections: Vec::new(),
+            }))
+        }
+
         // For each corridor, pick a random direction and grow in it if all adjacent spaces are available
         corridors.shuffle(rng);
         corridors.iter_mut().for_each(|corridor| {
-            let weights = if corridor.height > corridor.width {
-                let n = (corridor.height - corridor.width) as f32 * squareness;
-                [1.0, 1.0 + n, 1.0, 1.0 + n]
-            } else if corridor.height < corridor.width {
+            let weights = if corridor.width > corridor.height {
                 let n = (corridor.width - corridor.height) as f32 * squareness;
                 [1.0 + n, 1.0, 1.0 + n, 1.0]
+            } else if corridor.width < corridor.height {
+                let n = (corridor.height - corridor.width) as f32 * squareness;
+                [1.0, 1.0 + n, 1.0, 1.0 + n]
             } else {
                 [1.0, 1.0, 1.0, 1.0]
             };
@@ -1297,13 +1305,9 @@ fn generate_corridors<R: Rng>(
                 }
             };
 
-            for x in 0..corridor.width {
-                for y in 0..corridor.height {
-                    let i = (corridor.cell.i + x) as usize;
-                    let j = (corridor.cell.j + y) as usize;
-                    grid[i][j] = true;
-                }
-            }
+            corridor.cells().for_each(|cell| {
+                grid[cell.i as usize][cell.j as usize] = true;
+            });
         });
 
         // If all cells in grid are filled, break out of the loop
@@ -1311,30 +1315,7 @@ fn generate_corridors<R: Rng>(
             break;
         }
 
-        // Every 20 positions, add new 1x1 squares to random positions in the grid
         iter += 1;
-        if iter % 20 == 0 {
-            let mut empty_cells: Vec<_> = cells(width, height)
-                .filter(|cell| !grid[cell.i as usize][cell.j as usize])
-                .collect();
-            empty_cells.shuffle(rng);
-
-            let empty_cells = &empty_cells[0..cmp::max(empty_cells.len() / 8, 1)];
-
-            for cell in empty_cells {
-                grid[cell.i as usize][cell.j as usize] = true;
-            }
-
-            let len = corridors.len() as u16;
-            corridors.extend(empty_cells.iter().enumerate().map(|(i, cell)| CellRoom {
-                id: room_id + len + i as u16,
-                kind: RoomKind::Corridor,
-                cell: *cell,
-                width: 1,
-                height: 1,
-                connections: Vec::new(),
-            }))
-        }
     }
 
     FxHashMap::from_iter(corridors.iter().map(|room| (room.id, room.clone())))

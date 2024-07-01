@@ -882,8 +882,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1fc403891a21bcfb7c37834ba66a547a8f402146eba7265b5a6d88059c9ff2f"
 
 [[package]]
-name = "tatami"
-version = "0.1.0"
+name = "tatami-dungeon"
+version = "0.1.1"
 dependencies = [
  "image",
  "itertools 0.13.0",
