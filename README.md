@@ -32,8 +32,13 @@ Example output:
 let dungeon = Dungeon::generate();
 
 for floor in &dungeon.floors {
-    for tile in &floor.tiles {
-        // Draw tile
+    for (x, col) in floor.tiles.iter().enumerate() {
+        for (y, tile) in col.iter().enumerate() {
+        	match tile {
+        		Tile::Floor => // Draw floor tile at (x, y)
+        		Tile::Wall => // Draw wall tile at (x, y)
+        	}
+        }
     }
 
     for room in &floor.rooms {
