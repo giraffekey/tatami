@@ -1,9 +1,13 @@
 [package]
-name = "tatami"
+name = "tatami-dungeon"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["giraffekey <giraffekey@tutanota.com>"]
+description = "A roguelike dungeon generation algorithm"
+repository = "https://github.com/giraffekey/tatami"
+readme = "README.md"
+exclude = ["images/*"]
 
 [dependencies]
 image = "0.25"
