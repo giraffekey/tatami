@@ -1,7 +1,7 @@
 # Tatami &emsp; [![License]][license] [![Latest Version]][crates.io] [![Docs]][docs.rs]
 
 [License]: https://img.shields.io/badge/license-MIT%2FApache-blue.svg
-[license]: https://github.com/giraffekey/tatami#license
+[license]: https://github.com/giraffekey/tatami/blob/main/LICENSE
 [Latest Version]: https://img.shields.io/crates/v/tatami-dungeon.svg
 [crates.io]: https://crates.io/crates/tatami-dungeon
 [Docs]: https://docs.rs/tatami-dungeon/badge.svg
