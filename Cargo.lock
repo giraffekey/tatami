@@ -888,12 +888,14 @@ dependencies = [
  "image",
  "itertools 0.13.0",
  "noise",
+ "num-integer",
  "rand",
  "rand_chacha",
  "rayon",
  "rustc-hash",
  "strum",
  "strum_macros",
+ "thiserror",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@
 use image::{imageops::overlay, open, ImageError, Rgb, RgbImage};
 use itertools::Itertools;
 use noise::{NoiseFn, Perlin};
+use num_integer::Roots;
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
 use rand_chacha::ChaCha20Rng;
@@ -23,57 +24,57 @@ use strum_macros::EnumIter;
 #[derive(Debug, Clone, Copy)]
 pub struct GenerateDungeonParams {
     /// Width and height of dungeon in terms of cells.
-    pub dimensions: (u16, u16),
+    pub dimensions: (u32, u32),
     /// Number of tiles to translate cells to when outputting the final dungeon.
-    pub tiles_per_cell: u16,
+    pub tiles_per_cell: u32,
     /// Number of floors in the dungeon.
-    pub num_floors: u16,
+    pub num_floors: u32,
     /// Minimum number of main rooms per floor. These rooms are connected by corridors.
-    pub min_rooms_per_floor: u16,
+    pub min_rooms_per_floor: u32,
     /// Maximum number of main rooms per floor. These rooms are connected by corridors.
-    pub max_rooms_per_floor: u16,
+    pub max_rooms_per_floor: u32,
     /// Minimum size for main rooms.
-    pub min_room_size: u16,
+    pub min_room_size: u32,
     /// Maximum size for main rooms.
-    pub max_room_size: u16,
+    pub max_room_size: u32,
     /// Maximum size for corridors. Minimum size is always one.
-    pub max_corridor_size: u16,
+    pub max_corridor_size: u32,
     /// This value decreases the likelihood of a corridor having one side much longer than the other.
     pub squareness: f32,
     /// Minimum downward stairs per floor. Number of upward stairs will always be equal to the number of downward stairs in the previous floor.
-    pub min_stairs_per_floor: u16,
+    pub min_stairs_per_floor: u32,
     /// Maximum downward stairs per floor. Number of upward stairs will always be equal to the number of downward stairs in the previous floor.
-    pub max_stairs_per_floor: u16,
+    pub max_stairs_per_floor: u32,
     /// Minimum pairs of teleporters per floor.
-    pub min_teleporters_per_floor: u16,
+    pub min_teleporters_per_floor: u32,
     /// Maximum pairs of teleporters per floor.
-    pub max_teleporters_per_floor: u16,
+    pub max_teleporters_per_floor: u32,
     /// Minimum number of items per main room or corridor.
-    pub min_items_per_room: u16,
+    pub min_items_per_room: u32,
     /// Maximum number of items per main room or corridor.
-    pub max_items_per_room: u16,
+    pub max_items_per_room: u32,
     /// Maximum value for item rarity score. Minimum will always be one. Items tend to be rarer in farther rooms or floors.
-    pub max_item_rarity: u16,
+    pub max_item_rarity: u32,
     /// Scale to be used for the item density noise map.
     pub item_density_scale: f32,
     /// Scale to be used for the item rarity noise map.
     pub item_rarity_scale: f32,
     /// Minimum number of enemies per main room or corridor.
-    pub min_enemies_per_room: u16,
+    pub min_enemies_per_room: u32,
     /// Maximum number of items per main room or corridor.
-    pub max_enemies_per_room: u16,
+    pub max_enemies_per_room: u32,
     /// Maximum value for enemy difficulty score. Minimum will always be one. Enemies tend to be more difficult in farther rooms or floors.
-    pub max_enemy_difficulty: u16,
+    pub max_enemy_difficulty: u32,
     /// Scale to be used for the enemy density noise map.
     pub enemy_density_scale: f32,
     /// Scale to be used for the enemy difficulty noise map.
     pub enemy_difficulty_scale: f32,
     /// Minimum number of traps per main room or corridor.
-    pub min_traps_per_room: u16,
+    pub min_traps_per_room: u32,
     /// Maximum number of enemies per main room or corridor.
-    pub max_traps_per_room: u16,
+    pub max_traps_per_room: u32,
     /// Maximum value for trap difficulty score. Minimum will always be one. Traps tend to be more difficult in farther rooms or floors.
-    pub max_trap_difficulty: u16,
+    pub max_trap_difficulty: u32,
     /// Scale to be used for the trap density noise map.
     pub trap_density_scale: f32,
     /// Scale to be used for the trap difficulty noise map.
@@ -101,18 +102,18 @@ impl Default for GenerateDungeonParams {
             min_items_per_room: 1,
             max_items_per_room: 5,
             max_item_rarity: 100,
-            item_density_scale: 0.01,
-            item_rarity_scale: 0.01,
+            item_density_scale: 0.5,
+            item_rarity_scale: 2.0,
             min_enemies_per_room: 1,
             max_enemies_per_room: 5,
             max_enemy_difficulty: 100,
-            enemy_density_scale: 0.01,
-            enemy_difficulty_scale: 0.01,
+            enemy_density_scale: 0.5,
+            enemy_difficulty_scale: 2.0,
             min_traps_per_room: 1,
             max_traps_per_room: 5,
             max_trap_difficulty: 100,
-            trap_density_scale: 0.01,
-            trap_difficulty_scale: 0.01,
+            trap_density_scale: 0.5,
+            trap_difficulty_scale: 2.0,
             difficulty_ratio: 5.0,
         }
     }
@@ -121,8 +122,8 @@ impl Default for GenerateDungeonParams {
 // A cell in the mock-up grid
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Cell {
-    pub i: u16,
-    pub j: u16,
+    pub i: u32,
+    pub j: u32,
 }
 
 impl Cell {
@@ -144,11 +145,11 @@ impl Cell {
 // A room in the mock-up floor
 #[derive(Debug, Clone)]
 struct CellRoom {
-    pub id: u16,
+    pub id: u32,
     pub kind: RoomKind,
     pub cell: Cell,
-    pub width: u16,
-    pub height: u16,
+    pub width: u32,
+    pub height: u32,
     pub connections: Vec<Connection>,
 }
 
@@ -176,14 +177,58 @@ impl CellRoom {
 }
 
 /// X and Y position of a tile.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Position {
-    pub x: u16,
-    pub y: u16,
+    pub x: u32,
+    pub y: u32,
+}
+
+impl Position {
+    /// Adjacent positions in cardinal directions.
+    pub fn adjacent(&self, dimensions: (u32, u32)) -> Vec<Self> {
+        let mut positions = Vec::new();
+
+        if self.x > 0 {
+            positions.push(Self {
+                x: self.x - 1,
+                ..*self
+            });
+        }
+
+        if self.x < dimensions.0 - 1 {
+            positions.push(Self {
+                x: self.x + 1,
+                ..*self
+            });
+        }
+
+        if self.y > 0 {
+            positions.push(Self {
+                y: self.y - 1,
+                ..*self
+            });
+        }
+
+        if self.y < dimensions.1 - 1 {
+            positions.push(Self {
+                y: self.y + 1,
+                ..*self
+            });
+        }
+
+        positions
+    }
+
+    /// Distance between two positions
+    pub fn distance(&self, other: Self) -> u32 {
+        let dx = self.x as i32 - other.x as i32;
+        let dy = self.y as i32 - other.y as i32;
+        (dx * dx + dy * dy).sqrt() as u32
+    }
 }
 
 /// Cardinal directions iterated in clockwise order.
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, EnumIter)]
 pub enum Direction {
     Up,
     Right,
@@ -207,7 +252,7 @@ impl Direction {
 #[derive(Debug, Clone, Copy)]
 pub struct Connection {
     /// ID of the connected to room.
-    pub id: u16,
+    pub id: u32,
     /// Direction the connected to room is in.
     pub direction: Direction,
 }
@@ -216,57 +261,57 @@ pub struct Connection {
 #[derive(Debug, Clone, Copy)]
 pub struct Stair {
     /// ID of stairs.
-    pub id: u16,
+    pub id: u32,
     /// Tile position of stairs.
     pub position: Position,
     /// Leads to next floor if true, leads to previous floor if false.
     pub downwards: bool,
     /// ID of stairs in other floor these stairs are connected to.
-    pub connected: u16,
+    pub connected: u32,
 }
 
 /// Teleporter providing instant transportation to another on the same floor.
 #[derive(Debug, Clone, Copy)]
 pub struct Teleporter {
     /// ID of teleporter.
-    pub id: u16,
+    pub id: u32,
     /// Tile position of teleporter.
     pub position: Position,
     /// ID of teleporter that this teleporter is linked to.
-    pub connected: u16,
+    pub connected: u32,
 }
 
 /// An item that can be used to equipped by the player.
 #[derive(Debug, Clone, Copy)]
 pub struct Item {
     /// ID of item instance.
-    pub id: u16,
+    pub id: u32,
     /// Tile position of item.
     pub position: Position,
     /// Rarity value of item. This value can be used to decide which item is placed at this location.
-    pub rarity: u16,
+    pub rarity: u32,
 }
 
 /// An enemy that moves toward and attacks the player.
 #[derive(Debug, Clone, Copy)]
 pub struct Enemy {
     /// ID of enemy instance.
-    pub id: u16,
+    pub id: u32,
     /// Tile position of enemy.
     pub position: Position,
     /// Difficulty value of enemy. This value can be used to decide which enemy is placed at this location.
-    pub difficulty: u16,
+    pub difficulty: u32,
 }
 
 /// A trap that is hidden from the player and creates a negative effect when stepped on.
 #[derive(Debug, Clone, Copy)]
 pub struct Trap {
     /// ID of trap instance.
-    pub id: u16,
+    pub id: u32,
     /// Tile position of trap.
     pub position: Position,
     /// Difficulty value of trap. This value can be used to decide which trap is placed at this location.
-    pub difficulty: u16,
+    pub difficulty: u32,
 }
 
 /// Type of room.
@@ -282,17 +327,17 @@ pub enum RoomKind {
 #[derive(Debug, Clone)]
 pub struct Room {
     /// ID of room.
-    pub id: u16,
+    pub id: u32,
     /// Type of room (Main or Corridor).
     pub kind: RoomKind,
     /// Floor number (indexed by zero) this room is on.
-    pub floor: u16,
+    pub floor: u32,
     /// Position of the top-left tile of the room.
     pub position: Position,
     /// Width (in tiles) of room.
-    pub width: u16,
+    pub width: u32,
     /// Height (in tiles) of room.
-    pub height: u16,
+    pub height: u32,
     /// Each room is connected to at least one other room by a door.
     pub connections: Vec<Connection>,
     /// Difficulty value of the room. Based on how far the room is from the starting room.
@@ -319,7 +364,7 @@ impl Room {
     }
 
     /// Iterator over all floor tile positions in the room.
-    pub fn spaces(&self) -> impl Iterator<Item = Position> + '_ {
+    pub fn positions(&self) -> impl Iterator<Item = Position> + '_ {
         (1..self.width - 1).flat_map(move |i| {
             (1..self.height - 1).map(move |j| Position {
                 x: self.position.x + i,
@@ -329,8 +374,8 @@ impl Room {
     }
 
     /// Iterator over all empty floor tile positions in the room.
-    pub fn free_spaces(&self) -> impl Iterator<Item = Position> + '_ {
-        self.spaces().filter(|position| {
+    pub fn empty_positions(&self) -> impl Iterator<Item = Position> + '_ {
+        self.positions().filter(|position| {
             !self.stairs.iter().any(|stair| stair.position == *position)
                 && !self
                     .teleporters
@@ -344,10 +389,10 @@ impl Room {
 
     fn from_cell_room(
         room: &CellRoom,
-        floor: u16,
-        tiles_per_cell: u16,
-        rooms: &FxHashMap<u16, CellRoom>,
-        kept: &FxHashSet<u16>,
+        floor: u32,
+        tiles_per_cell: u32,
+        rooms: &FxHashMap<u32, CellRoom>,
+        kept: &FxHashSet<u32>,
     ) -> Self {
         Self {
             id: room.id,
@@ -379,7 +424,7 @@ impl Room {
 }
 
 /// A single tile in the dungeon.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tile {
     /// Traversable.
     Floor,
@@ -391,13 +436,20 @@ pub enum Tile {
 #[derive(Debug, Clone)]
 pub struct Floor {
     /// The index of this floor, starting at zero for the top floor.
-    pub number: u16,
+    pub number: u32,
     /// A list of tiles in the floor.
     pub tiles: Vec<Vec<Tile>>,
     /// A list of rooms in the floor.
     pub rooms: Vec<Room>,
     /// Top-left position of all 2x2 doors.
     pub doors: Vec<Position>,
+}
+
+impl Floor {
+    /// Get the tile at the position.
+    pub fn tile_at(&self, position: Position) -> Tile {
+        self.tiles[position.x as usize][position.y as usize]
+    }
 }
 
 /// A procedurally generated dungeon, complete with rooms, items and enemies.
@@ -408,7 +460,7 @@ pub struct Dungeon {
     /// A list of floors in the dungeon.
     pub floors: Vec<Floor>,
     /// The ID of the room the player starts in.
-    pub starting_room_id: u16,
+    pub starting_room_id: u32,
     /// The initial tile position of the player.
     pub player_position: Position,
 }
@@ -477,8 +529,8 @@ impl Dungeon {
             teleporter_id += floor
                 .rooms
                 .iter()
-                .map(|room| room.teleporters.len() as u16)
-                .sum::<u16>();
+                .map(|room| room.teleporters.len() as u32)
+                .sum::<u32>();
 
             floors.push(floor);
         }
@@ -514,7 +566,7 @@ impl Dungeon {
                         None => None,
                     },
                 )
-                .collect::<Vec<(u16, u16)>>(),
+                .collect::<Vec<(u32, u32)>>(),
         );
         let max_cost = costs.values().copied().max().unwrap();
         let max_area = rooms
@@ -604,7 +656,7 @@ impl Dungeon {
     /// Output an image representation of the given floor.
     pub fn output_floor_as_image<P: AsRef<Path>>(
         &self,
-        floor_number: u16,
+        floor_number: u32,
         path: P,
     ) -> Result<(), ImageError> {
         let img = self.floor_to_image(floor_number as usize);
@@ -826,11 +878,11 @@ impl Dungeon {
 // Generate rooms for a floor in the dungeon, then add stairs and teleporters
 fn generate_floor<R: Rng>(
     rng: &mut R,
-    floor_number: u16,
+    floor_number: u32,
     params: &GenerateDungeonParams,
     prev_stairs: &[Stair],
-    room_id: u16,
-    teleporter_id: u16,
+    room_id: u32,
+    teleporter_id: u32,
 ) -> Floor {
     let (width, height) = params.dimensions;
     let prev_stair_cells: Box<[Cell]> = prev_stairs
@@ -864,7 +916,7 @@ fn generate_floor<R: Rng>(
         rooms.extend(generate_corridors(
             &mut grid,
             rng,
-            room_id + rooms.len() as u16,
+            room_id + rooms.len() as u32,
             width,
             height,
             params.max_corridor_size,
@@ -895,9 +947,9 @@ fn generate_floor<R: Rng>(
             let last_stair_id = prev_stairs.iter().map(|stair| stair.id).max().unwrap_or(0);
             for (i, stair) in prev_stairs.iter().enumerate() {
                 for room in &mut rooms {
-                    if room.spaces().contains(&stair.position) {
+                    if room.positions().contains(&stair.position) {
                         room.stairs.push(Stair {
-                            id: last_stair_id + i as u16,
+                            id: last_stair_id + i as u32,
                             position: stair.position,
                             downwards: false,
                             connected: stair.id,
@@ -906,13 +958,13 @@ fn generate_floor<R: Rng>(
                     }
                 }
             }
-            let last_stair_id = last_stair_id + prev_stairs.len() as u16;
+            let last_stair_id = last_stair_id + prev_stairs.len() as u32;
 
             let num_stairs =
                 rng.gen_range(params.min_stairs_per_floor..=params.max_stairs_per_floor);
             for i in 0..num_stairs {
                 let room = rooms.choose_mut(rng).unwrap();
-                let position = room.free_spaces().choose(rng).unwrap();
+                let position = room.empty_positions().choose(rng).unwrap();
                 room.stairs.push(Stair {
                     id: last_stair_id + i,
                     position,
@@ -929,7 +981,7 @@ fn generate_floor<R: Rng>(
 
                 for (id, connected) in [(id1, id2), (id2, id1)] {
                     let room = rooms.choose_mut(rng).unwrap();
-                    let position = room.free_spaces().choose(rng).unwrap();
+                    let position = room.empty_positions().choose(rng).unwrap();
                     room.teleporters.push(Teleporter {
                         id,
                         position,
@@ -953,9 +1005,9 @@ fn populate_room<R: Rng>(
     room: &mut Room,
     rng: &mut R,
     params: &GenerateDungeonParams,
-    costs: &FxHashMap<u16, u16>,
-    max_cost: u16,
-    max_area: u16,
+    costs: &FxHashMap<u32, u32>,
+    max_cost: u32,
+    max_area: u32,
     item_density_map: &Perlin,
     item_rarity_map: &Perlin,
     enemy_density_map: &Perlin,
@@ -976,32 +1028,31 @@ fn populate_room<R: Rng>(
 
     let min_items = params.min_items_per_room;
     let max_items =
-        min_items + ((params.max_items_per_room - min_items) as f32 * density_ratio) as u16;
-    let item_density_noise = get_room_noise(
-        room,
-        item_density_map,
-        params.item_density_scale,
-        width,
-        height,
-    );
+        min_items + ((params.max_items_per_room - min_items) as f32 * density_ratio) as u32;
+    let item_density_noise = get_room_noise(room, item_density_map, width, height);
     let num_items = if min_items == max_items {
         max_items
     } else {
-        weighted_random(rng, min_items, max_items, item_density_noise)
+        weighted_random(
+            rng,
+            min_items,
+            max_items,
+            item_density_noise,
+            params.item_density_scale,
+        )
     };
 
     for _ in 0..num_items {
-        let position = room.free_spaces().choose(rng).unwrap();
+        let position = room.empty_positions().choose(rng).unwrap();
 
-        let item_rarity_noise = get_room_noise(
-            room,
-            item_rarity_map,
-            params.item_rarity_scale,
-            width,
-            height,
+        let item_rarity_noise = get_room_noise(room, item_rarity_map, width, height);
+        let rarity = weighted_random(
+            rng,
+            1,
+            params.max_item_rarity,
+            item_rarity_noise,
+            params.item_rarity_scale * (1.0 - room.difficulty),
         );
-        let rarity = weighted_random(rng, 1, params.max_item_rarity, item_rarity_noise);
-        let rarity = (rarity as f32 * room.difficulty) as u16;
 
         room.items.push(Item {
             id: rng.gen(),
@@ -1012,33 +1063,31 @@ fn populate_room<R: Rng>(
 
     let min_enemies = params.min_enemies_per_room;
     let max_enemies =
-        min_enemies + ((params.max_enemies_per_room - min_enemies) as f32 * density_ratio) as u16;
-    let enemy_density_noise = get_room_noise(
-        room,
-        enemy_density_map,
-        params.enemy_density_scale,
-        width,
-        height,
-    );
+        min_enemies + ((params.max_enemies_per_room - min_enemies) as f32 * density_ratio) as u32;
+    let enemy_density_noise = get_room_noise(room, enemy_density_map, width, height);
     let num_enemies = if min_enemies == max_enemies {
         max_enemies
     } else {
-        weighted_random(rng, min_enemies, max_enemies, enemy_density_noise)
+        weighted_random(
+            rng,
+            min_enemies,
+            max_enemies,
+            enemy_density_noise,
+            params.enemy_density_scale,
+        )
     };
 
     for _ in 0..num_enemies {
-        let position = room.free_spaces().choose(rng).unwrap();
+        let position = room.empty_positions().choose(rng).unwrap();
 
-        let enemy_difficulty_noise = get_room_noise(
-            room,
-            &enemy_difficulty_map,
-            params.enemy_difficulty_scale,
-            width,
-            height,
+        let enemy_difficulty_noise = get_room_noise(room, &enemy_difficulty_map, width, height);
+        let difficulty = weighted_random(
+            rng,
+            1,
+            params.max_enemy_difficulty,
+            enemy_difficulty_noise,
+            params.enemy_difficulty_scale * (1.0 - room.difficulty),
         );
-        let difficulty =
-            weighted_random(rng, 1, params.max_enemy_difficulty, enemy_difficulty_noise);
-        let difficulty = (difficulty as f32 * room.difficulty) as u16;
 
         room.enemies.push(Enemy {
             id: rng.gen(),
@@ -1049,32 +1098,31 @@ fn populate_room<R: Rng>(
 
     let min_traps = params.min_traps_per_room;
     let max_traps =
-        min_traps + ((params.max_traps_per_room - min_traps) as f32 * density_ratio) as u16;
-    let trap_density_noise = get_room_noise(
-        room,
-        trap_density_map,
-        params.trap_density_scale,
-        width,
-        height,
-    );
+        min_traps + ((params.max_traps_per_room - min_traps) as f32 * density_ratio) as u32;
+    let trap_density_noise = get_room_noise(room, trap_density_map, width, height);
     let num_traps = if min_traps == max_traps {
         max_traps
     } else {
-        weighted_random(rng, min_traps, max_traps, trap_density_noise)
+        weighted_random(
+            rng,
+            min_traps,
+            max_traps,
+            trap_density_noise,
+            params.trap_density_scale,
+        )
     };
 
     for _ in 0..num_traps {
-        let position = room.free_spaces().choose(rng).unwrap();
+        let position = room.empty_positions().choose(rng).unwrap();
 
-        let trap_difficulty_noise = get_room_noise(
-            room,
-            trap_difficulty_map,
-            params.trap_difficulty_scale,
-            width,
-            height,
+        let trap_difficulty_noise = get_room_noise(room, trap_difficulty_map, width, height);
+        let difficulty = weighted_random(
+            rng,
+            1,
+            params.max_trap_difficulty,
+            trap_difficulty_noise,
+            params.trap_difficulty_scale * (1.0 - room.difficulty),
         );
-        let difficulty = weighted_random(rng, 1, params.max_trap_difficulty, trap_difficulty_noise);
-        let difficulty = (difficulty as f32 * room.difficulty) as u16;
 
         room.traps.push(Trap {
             id: rng.gen(),
@@ -1088,13 +1136,13 @@ fn populate_room<R: Rng>(
 fn generate_main_rooms<R: Rng>(
     grid: &mut [Vec<bool>],
     rng: &mut R,
-    width: u16,
-    height: u16,
-    room_id: u16,
-    num_rooms: u16,
-    min_room_size: u16,
-    max_room_size: u16,
-) -> FxHashMap<u16, CellRoom> {
+    width: u32,
+    height: u32,
+    room_id: u32,
+    num_rooms: u32,
+    min_room_size: u32,
+    max_room_size: u32,
+) -> FxHashMap<u32, CellRoom> {
     let mut n = 1;
     let mut depth = 0;
     loop {
@@ -1111,7 +1159,7 @@ fn generate_main_rooms<R: Rng>(
 
     let rooms = FxHashMap::from_iter(partitions.iter().take(num_rooms as usize).enumerate().map(
         |(index, (i, j, width, height))| {
-            let id = room_id + index as u16;
+            let id = room_id + index as u32;
             let room_width = rng.gen_range(min_room_size..=max_room_size);
             let room_height = rng.gen_range(min_room_size..=max_room_size);
             let i = rng.gen_range(i + 1..i + width - 1 - room_width);
@@ -1143,13 +1191,13 @@ fn generate_main_rooms<R: Rng>(
 
 // Use binary space partitioning to recursively split the grid into rectangles of equal dimensions
 fn create_partitions(
-    i: u16,
-    j: u16,
-    width: u16,
-    height: u16,
+    i: u32,
+    j: u32,
+    width: u32,
+    height: u32,
     split_horizontally: bool,
-    depth: u16,
-) -> Vec<(u16, u16, u16, u16)> {
+    depth: u32,
+) -> Vec<(u32, u32, u32, u32)> {
     if depth == 0 {
         return vec![(i, j, width, height)];
     }
@@ -1177,12 +1225,12 @@ fn create_partitions(
 fn generate_corridors<R: Rng>(
     grid: &mut [Vec<bool>],
     rng: &mut R,
-    room_id: u16,
-    width: u16,
-    height: u16,
-    max_corridor_size: u16,
+    room_id: u32,
+    width: u32,
+    height: u32,
+    max_corridor_size: u32,
     squareness: f32,
-) -> FxHashMap<u16, CellRoom> {
+) -> FxHashMap<u32, CellRoom> {
     let mut corridors = Vec::new();
     let mut iter = 0;
     loop {
@@ -1199,9 +1247,9 @@ fn generate_corridors<R: Rng>(
                 grid[cell.i as usize][cell.j as usize] = true;
             }
 
-            let len = corridors.len() as u16;
+            let len = corridors.len() as u32;
             corridors.extend(empty_cells.iter().enumerate().map(|(i, cell)| CellRoom {
-                id: room_id + len + i as u16,
+                id: room_id + len + i as u32,
                 kind: RoomKind::Corridor,
                 cell: *cell,
                 width: 1,
@@ -1322,7 +1370,7 @@ fn generate_corridors<R: Rng>(
 }
 
 // Creates connections between all main rooms and corridors
-fn connect_corridors<R: Rng>(rng: &mut R, rooms: &mut FxHashMap<u16, CellRoom>) {
+fn connect_corridors<R: Rng>(rng: &mut R, rooms: &mut FxHashMap<u32, CellRoom>) {
     let mut to_connect: Vec<_> = rooms.keys().copied().collect();
     to_connect.shuffle(rng);
 
@@ -1370,10 +1418,10 @@ fn connect_corridors<R: Rng>(rng: &mut R, rooms: &mut FxHashMap<u16, CellRoom>) 
 // Each main room pathfinds to another main room through corridors based on their connections. Unused corridors are deleted.
 fn connect_rooms<R: Rng>(
     rng: &mut R,
-    rooms: &FxHashMap<u16, CellRoom>,
+    rooms: &FxHashMap<u32, CellRoom>,
     prev_stair_cells: &[Cell],
-) -> Option<FxHashSet<u16>> {
-    let main_rooms: FxHashMap<u16, CellRoom> = FxHashMap::from_iter(
+) -> Option<FxHashSet<u32>> {
+    let main_rooms: FxHashMap<u32, CellRoom> = FxHashMap::from_iter(
         rooms
             .iter()
             .filter(|(_, room)| room.kind == RoomKind::Main)
@@ -1387,7 +1435,7 @@ fn connect_rooms<R: Rng>(
     queue.push_back(start);
     visited.insert(start);
 
-    let mut kept: FxHashSet<u16> = FxHashSet::default();
+    let mut kept: FxHashSet<u32> = FxHashSet::default();
     let mut paths = Vec::with_capacity(main_rooms.len() - 1);
     while let Some(id) = queue.pop_front() {
         let room = main_rooms.get(&id).unwrap();
@@ -1450,11 +1498,11 @@ fn connect_rooms<R: Rng>(
 
 // Generate a grid of tiles for the floor based on rooms and doors
 fn generate_tiles(
-    rooms: &FxHashMap<u16, CellRoom>,
-    kept: &FxHashSet<u16>,
-    width: u16,
-    height: u16,
-    tiles_per_cell: u16,
+    rooms: &FxHashMap<u32, CellRoom>,
+    kept: &FxHashSet<u32>,
+    width: u32,
+    height: u32,
+    tiles_per_cell: u32,
 ) -> (Vec<Vec<Tile>>, Vec<Position>) {
     let mut tiles = Vec::with_capacity((width * tiles_per_cell) as usize);
     for x in 0..width * tiles_per_cell {
@@ -1554,14 +1602,14 @@ fn generate_tiles(
 }
 
 // An iterator over all cells in a floor
-fn cells(width: u16, height: u16) -> impl Iterator<Item = Cell> {
+fn cells(width: u32, height: u32) -> impl Iterator<Item = Cell> {
     (0..width).flat_map(move |i| (0..height).map(move |j| Cell { i, j }))
 }
 
 // An iterator over all adjacent rooms
 fn neighbors(
     room: &CellRoom,
-    rooms: &FxHashMap<u16, CellRoom>,
+    rooms: &FxHashMap<u32, CellRoom>,
 ) -> impl Iterator<Item = Connection> {
     rooms
         .values()
@@ -1576,13 +1624,13 @@ fn neighbors(
 }
 
 // Average perlin noise for a room
-fn get_room_noise(room: &Room, perlin: &Perlin, scale: f32, width: u16, height: u16) -> f32 {
+fn get_room_noise(room: &Room, perlin: &Perlin, width: u32, height: u32) -> f32 {
     let noise_sum: f32 = (0..room.width)
         .flat_map(|i| {
             (0..room.height).map(move |j| {
                 perlin.get([
-                    (room.floor * width) as f64 + (room.position.x + i) as f64 * scale as f64,
-                    (room.floor * height) as f64 + (room.position.y + j) as f64 * scale as f64,
+                    (room.floor * width) as f64 + (room.position.x + i) as f64 * 0.01,
+                    (room.floor * height) as f64 + (room.position.y + j) as f64 * 0.01,
                 ]) as f32
             })
         })
@@ -1593,13 +1641,12 @@ fn get_room_noise(room: &Room, perlin: &Perlin, scale: f32, width: u16, height: 
 
 // Pick a random value from a range of integers weighted by a noise value
 // Larger values are less likely to be picked than smaller ones
-fn weighted_random<R: Rng>(rng: &mut R, min: u16, max: u16, noise: f32) -> u16 {
+fn weighted_random<R: Rng>(rng: &mut R, min: u32, max: u32, noise: f32, scale: f32) -> u32 {
     let values: Vec<_> = (min..=max).collect();
-    let min_weight = (values.len() as f32).powf(-0.5 * noise);
-    let max_weight = (values.len() as f32).powf(0.5 * noise);
-    let step = (max_weight - min_weight) / (values.len() - 1) as f32;
+    let noise = (noise + 1.0) / 2.0;
     let weights: Vec<_> = (0..values.len())
-        .map(|i| min_weight + i as f32 * step)
+        .map(|i| ((i + 1) as f32).powf(1.0 + scale * noise))
+        .rev()
         .collect();
     let dist = WeightedIndex::new(weights).unwrap();
     values[dist.sample(rng)]
@@ -1607,8 +1654,8 @@ fn weighted_random<R: Rng>(rng: &mut R, min: u16, max: u16, noise: f32) -> u16 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frontier {
-    priority: u16,
-    id: u16,
+    priority: u32,
+    id: u32,
 }
 
 impl Ord for Frontier {
@@ -1625,10 +1672,10 @@ impl PartialOrd for Frontier {
 
 // Pathfind between mock-up rooms based on their connections
 fn pathfind_cell_rooms(
-    start: u16,
-    goal: u16,
-    rooms: &FxHashMap<u16, CellRoom>,
-) -> Option<(Vec<u16>, u16)> {
+    start: u32,
+    goal: u32,
+    rooms: &FxHashMap<u32, CellRoom>,
+) -> Option<(Vec<u32>, u32)> {
     let mut frontier = BinaryHeap::new();
     let mut came_from = FxHashMap::default();
     let mut costs = FxHashMap::default();
@@ -1680,15 +1727,15 @@ fn pathfind_cell_rooms(
 }
 
 // Distance between the center of two mock-up rooms
-fn cell_room_distance(a: &CellRoom, b: &CellRoom) -> u16 {
+fn cell_room_distance(a: &CellRoom, b: &CellRoom) -> u32 {
     let a = a.center();
     let b = b.center();
     let (i_diff, j_diff) = (a.i as f32 - b.i as f32, a.j as f32 - b.j as f32);
-    (i_diff * i_diff + j_diff * j_diff).sqrt() as u16
+    (i_diff * i_diff + j_diff * j_diff).sqrt() as u32
 }
 
 // Pathfind between floor rooms based on their connections, stairs and teleporters
-fn pathfind_rooms(start: u16, goal: u16, rooms: &FxHashMap<u16, Room>) -> Option<(Vec<u16>, u16)> {
+fn pathfind_rooms(start: u32, goal: u32, rooms: &FxHashMap<u32, Room>) -> Option<(Vec<u32>, u32)> {
     let mut frontier = BinaryHeap::new();
     let mut came_from = FxHashMap::default();
     let mut costs = FxHashMap::default();
@@ -1769,11 +1816,11 @@ fn pathfind_rooms(start: u16, goal: u16, rooms: &FxHashMap<u16, Room>) -> Option
 }
 
 // Distance between the center of two floor rooms
-fn room_distance(a: &Room, b: &Room) -> u16 {
+fn room_distance(a: &Room, b: &Room) -> u32 {
     let a = a.center();
     let b = b.center();
     let (x_diff, y_diff) = (a.x as f32 - b.x as f32, a.y as f32 - b.y as f32);
-    (x_diff * x_diff + y_diff * y_diff).sqrt() as u16
+    (x_diff * x_diff + y_diff * y_diff).sqrt() as u32
 }
 
 #[cfg(test)]
