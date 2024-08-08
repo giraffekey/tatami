@@ -33,12 +33,16 @@ pub struct GenerateDungeonParams {
     pub min_rooms_per_floor: u32,
     /// Maximum number of main rooms per floor. These rooms are connected by corridors.
     pub max_rooms_per_floor: u32,
-    /// Minimum size for main rooms.
-    pub min_room_size: u32,
-    /// Maximum size for main rooms.
-    pub max_room_size: u32,
-    /// Maximum size for corridors. Minimum size is always one.
-    pub max_corridor_size: u32,
+    /// Minimum dimensions in cells for main rooms.
+    pub min_room_dimensions: (u32, u32),
+    /// Maximum dimensions in cells for main rooms.
+    pub max_room_dimensions: (u32, u32),
+    /// Minimum dimensions in cells for corridors.
+    pub min_corridor_dimensions: (u32, u32),
+    /// Maximum dimensions in cells for corridors.
+    pub max_corridor_dimensions: (u32, u32),
+    /// Dimensions in tiles for walls.
+    pub wall_dimensions: (u32, u32),
     /// This value decreases the likelihood of a corridor having one side much longer than the other.
     pub squareness: f32,
     /// Minimum downward stairs per floor. Number of upward stairs will always be equal to the number of downward stairs in the previous floor.
@@ -91,9 +95,11 @@ impl Default for GenerateDungeonParams {
             num_floors: 5,
             min_rooms_per_floor: 16,
             max_rooms_per_floor: 16,
-            min_room_size: 2,
-            max_room_size: 4,
-            max_corridor_size: 8,
+            min_room_dimensions: (2, 2),
+            max_room_dimensions: (4, 4),
+            min_corridor_dimensions: (1, 1),
+            max_corridor_dimensions: (8, 8),
+            wall_dimensions: (2, 2),
             squareness: 1.0,
             min_stairs_per_floor: 3,
             max_stairs_per_floor: 3,
@@ -185,7 +191,7 @@ pub struct Position {
 
 impl Position {
     /// Adjacent positions in cardinal directions.
-    pub fn adjacent(&self, dimensions: (u32, u32)) -> Vec<Self> {
+    pub fn adjacent_4(&self, dimensions: (u32, u32)) -> Vec<Self> {
         let mut positions = Vec::new();
 
         if self.x > 0 {
@@ -200,6 +206,69 @@ impl Position {
                 x: self.x + 1,
                 ..*self
             });
+        }
+
+        if self.y > 0 {
+            positions.push(Self {
+                y: self.y - 1,
+                ..*self
+            });
+        }
+
+        if self.y < dimensions.1 - 1 {
+            positions.push(Self {
+                y: self.y + 1,
+                ..*self
+            });
+        }
+
+        positions
+    }
+
+    /// Adjacent positions in cardinal and diagonal directions.
+    pub fn adjacent_8(&self, dimensions: (u32, u32)) -> Vec<Self> {
+        let mut positions = Vec::new();
+
+        if self.x > 0 {
+            positions.push(Self {
+                x: self.x - 1,
+                ..*self
+            });
+
+            if self.y > 0 {
+                positions.push(Self {
+                    x: self.x - 1,
+                    y: self.y - 1,
+                });
+            }
+
+            if self.y < dimensions.1 - 1 {
+                positions.push(Self {
+                    x: self.x - 1,
+                    y: self.y + 1,
+                });
+            }
+        }
+
+        if self.x < dimensions.0 - 1 {
+            positions.push(Self {
+                x: self.x + 1,
+                ..*self
+            });
+
+            if self.y > 0 {
+                positions.push(Self {
+                    x: self.x + 1,
+                    y: self.y - 1,
+                });
+            }
+
+            if self.y < dimensions.1 - 1 {
+                positions.push(Self {
+                    x: self.x + 1,
+                    y: self.y + 1,
+                });
+            }
         }
 
         if self.y > 0 {
@@ -364,9 +433,14 @@ impl Room {
     }
 
     /// Iterator over all floor tile positions in the room.
-    pub fn positions(&self) -> impl Iterator<Item = Position> + '_ {
-        (1..self.width - 1).flat_map(move |i| {
-            (1..self.height - 1).map(move |j| Position {
+    pub fn positions(&self, wall_dimensions: (u32, u32)) -> impl Iterator<Item = Position> + '_ {
+        let left_wall = (wall_dimensions.0 as f32 / 2.0).floor() as u32;
+        let right_wall = (wall_dimensions.0 as f32 / 2.0).ceil() as u32;
+        let top_wall = (wall_dimensions.1 as f32 / 2.0).floor() as u32;
+        let bottom_wall = (wall_dimensions.1 as f32 / 2.0).ceil() as u32;
+
+        (left_wall..self.width - right_wall).flat_map(move |i| {
+            (top_wall..self.height - bottom_wall).map(move |j| Position {
                 x: self.position.x + i,
                 y: self.position.y + j,
             })
@@ -374,8 +448,11 @@ impl Room {
     }
 
     /// Iterator over all empty floor tile positions in the room.
-    pub fn empty_positions(&self) -> impl Iterator<Item = Position> + '_ {
-        self.positions().filter(|position| {
+    pub fn empty_positions(
+        &self,
+        wall_dimensions: (u32, u32),
+    ) -> impl Iterator<Item = Position> + '_ {
+        self.positions(wall_dimensions).filter(|position| {
             !self.stairs.iter().any(|stair| stair.position == *position)
                 && !self
                     .teleporters
@@ -910,8 +987,8 @@ fn generate_floor<R: Rng>(
             height,
             room_id,
             num_rooms,
-            params.min_room_size,
-            params.max_room_size,
+            params.min_room_dimensions,
+            params.max_room_dimensions,
         );
         rooms.extend(generate_corridors(
             &mut grid,
@@ -919,7 +996,8 @@ fn generate_floor<R: Rng>(
             room_id + rooms.len() as u32,
             width,
             height,
-            params.max_corridor_size,
+            params.min_corridor_dimensions,
+            params.max_corridor_dimensions,
             params.squareness,
         ));
 
@@ -933,8 +1011,14 @@ fn generate_floor<R: Rng>(
         }
 
         if let Some(kept) = kept {
-            let (tiles, doors) =
-                generate_tiles(&rooms, &kept, width, height, params.tiles_per_cell);
+            let (tiles, doors) = generate_tiles(
+                &rooms,
+                &kept,
+                width,
+                height,
+                params.tiles_per_cell,
+                params.wall_dimensions,
+            );
 
             let mut rooms: Vec<_> = rooms
                 .values()
@@ -947,7 +1031,10 @@ fn generate_floor<R: Rng>(
             let last_stair_id = prev_stairs.iter().map(|stair| stair.id).max().unwrap_or(0);
             for (i, stair) in prev_stairs.iter().enumerate() {
                 for room in &mut rooms {
-                    if room.positions().contains(&stair.position) {
+                    if room
+                        .positions(params.wall_dimensions)
+                        .contains(&stair.position)
+                    {
                         room.stairs.push(Stair {
                             id: last_stair_id + i as u32,
                             position: stair.position,
@@ -964,7 +1051,10 @@ fn generate_floor<R: Rng>(
                 rng.gen_range(params.min_stairs_per_floor..=params.max_stairs_per_floor);
             for i in 0..num_stairs {
                 let room = rooms.choose_mut(rng).unwrap();
-                let position = room.empty_positions().choose(rng).unwrap();
+                let position = room
+                    .empty_positions(params.wall_dimensions)
+                    .choose(rng)
+                    .unwrap();
                 room.stairs.push(Stair {
                     id: last_stair_id + i,
                     position,
@@ -981,7 +1071,10 @@ fn generate_floor<R: Rng>(
 
                 for (id, connected) in [(id1, id2), (id2, id1)] {
                     let room = rooms.choose_mut(rng).unwrap();
-                    let position = room.empty_positions().choose(rng).unwrap();
+                    let position = room
+                        .empty_positions(params.wall_dimensions)
+                        .choose(rng)
+                        .unwrap();
                     room.teleporters.push(Teleporter {
                         id,
                         position,
@@ -1043,7 +1136,10 @@ fn populate_room<R: Rng>(
     };
 
     for _ in 0..num_items {
-        let position = room.empty_positions().choose(rng).unwrap();
+        let position = room
+            .empty_positions(params.wall_dimensions)
+            .choose(rng)
+            .unwrap();
 
         let item_rarity_noise = get_room_noise(room, item_rarity_map, width, height);
         let rarity = weighted_random(
@@ -1078,7 +1174,10 @@ fn populate_room<R: Rng>(
     };
 
     for _ in 0..num_enemies {
-        let position = room.empty_positions().choose(rng).unwrap();
+        let position = room
+            .empty_positions(params.wall_dimensions)
+            .choose(rng)
+            .unwrap();
 
         let enemy_difficulty_noise = get_room_noise(room, &enemy_difficulty_map, width, height);
         let difficulty = weighted_random(
@@ -1113,7 +1212,10 @@ fn populate_room<R: Rng>(
     };
 
     for _ in 0..num_traps {
-        let position = room.empty_positions().choose(rng).unwrap();
+        let position = room
+            .empty_positions(params.wall_dimensions)
+            .choose(rng)
+            .unwrap();
 
         let trap_difficulty_noise = get_room_noise(room, trap_difficulty_map, width, height);
         let difficulty = weighted_random(
@@ -1140,8 +1242,8 @@ fn generate_main_rooms<R: Rng>(
     height: u32,
     room_id: u32,
     num_rooms: u32,
-    min_room_size: u32,
-    max_room_size: u32,
+    min_room_dimensions: (u32, u32),
+    max_room_dimensions: (u32, u32),
 ) -> FxHashMap<u32, CellRoom> {
     let mut n = 1;
     let mut depth = 0;
@@ -1160,8 +1262,8 @@ fn generate_main_rooms<R: Rng>(
     let rooms = FxHashMap::from_iter(partitions.iter().take(num_rooms as usize).enumerate().map(
         |(index, (i, j, width, height))| {
             let id = room_id + index as u32;
-            let room_width = rng.gen_range(min_room_size..=max_room_size);
-            let room_height = rng.gen_range(min_room_size..=max_room_size);
+            let room_width = rng.gen_range(min_room_dimensions.0..=max_room_dimensions.0);
+            let room_height = rng.gen_range(min_room_dimensions.1..=max_room_dimensions.1);
             let i = rng.gen_range(i + 1..i + width - 1 - room_width);
             let j = rng.gen_range(j + 1..j + height - 1 - room_height);
             let room = CellRoom {
@@ -1228,7 +1330,8 @@ fn generate_corridors<R: Rng>(
     room_id: u32,
     width: u32,
     height: u32,
-    max_corridor_size: u32,
+    min_corridor_dimensions: (u32, u32),
+    max_corridor_dimensions: (u32, u32),
     squareness: f32,
 ) -> FxHashMap<u32, CellRoom> {
     let mut corridors = Vec::new();
@@ -1275,7 +1378,7 @@ fn generate_corridors<R: Rng>(
 
             match direction {
                 Direction::Left => {
-                    if corridor.cell.i == 0 || corridor.width >= max_corridor_size {
+                    if corridor.cell.i == 0 || corridor.width >= max_corridor_dimensions.0 {
                         return;
                     }
                     if (0..corridor.height)
@@ -1290,7 +1393,7 @@ fn generate_corridors<R: Rng>(
                 }
                 Direction::Right => {
                     if corridor.cell.i + corridor.width >= width
-                        || corridor.width >= max_corridor_size
+                        || corridor.width >= max_corridor_dimensions.0
                     {
                         return;
                     }
@@ -1305,7 +1408,7 @@ fn generate_corridors<R: Rng>(
                     }
                 }
                 Direction::Up => {
-                    if corridor.cell.j == 0 || corridor.height >= max_corridor_size {
+                    if corridor.cell.j == 0 || corridor.height >= max_corridor_dimensions.1 {
                         return;
                     }
                     if (0..corridor.width)
@@ -1320,7 +1423,7 @@ fn generate_corridors<R: Rng>(
                 }
                 Direction::Down => {
                     if corridor.cell.j + corridor.height >= height
-                        || corridor.height >= max_corridor_size
+                        || corridor.height >= max_corridor_dimensions.1
                     {
                         return;
                     }
@@ -1366,7 +1469,14 @@ fn generate_corridors<R: Rng>(
         iter += 1;
     }
 
-    FxHashMap::from_iter(corridors.iter().map(|room| (room.id, room.clone())))
+    FxHashMap::from_iter(
+        corridors
+            .iter()
+            .filter(|room| {
+                room.width >= min_corridor_dimensions.0 && room.height >= min_corridor_dimensions.1
+            })
+            .map(|room| (room.id, room.clone())),
+    )
 }
 
 // Creates connections between all main rooms and corridors
@@ -1503,6 +1613,7 @@ fn generate_tiles(
     width: u32,
     height: u32,
     tiles_per_cell: u32,
+    wall_dimensions: (u32, u32),
 ) -> (Vec<Vec<Tile>>, Vec<Position>) {
     let mut tiles = Vec::with_capacity((width * tiles_per_cell) as usize);
     for x in 0..width * tiles_per_cell {
@@ -1512,18 +1623,24 @@ fn generate_tiles(
         }
     }
 
-    let mut doors = Vec::new();
+    let mut doors = FxHashSet::default();
     for room in rooms.values() {
         if room.kind == RoomKind::Corridor && !kept.contains(&room.id) {
             continue;
         }
 
+        let left_wall = (wall_dimensions.0 as f32 / 2.0).floor() as u32;
+        let right_wall = (wall_dimensions.0 as f32 / 2.0).ceil() as u32;
+        let top_wall = (wall_dimensions.1 as f32 / 2.0).floor() as u32;
+        let bottom_wall = (wall_dimensions.1 as f32 / 2.0).ceil() as u32;
+
         let i = room.cell.i * tiles_per_cell;
         let j = room.cell.j * tiles_per_cell;
         let width = room.width * tiles_per_cell;
         let height = room.height * tiles_per_cell;
-        for x in 1..width - 1 {
-            for y in 1..height - 1 {
+
+        for x in left_wall..width - right_wall {
+            for y in top_wall..height - bottom_wall {
                 tiles[(i + x) as usize][(j + y) as usize] = Tile::Floor;
             }
         }
@@ -1540,7 +1657,7 @@ fn generate_tiles(
                     .any(|other| cell.direction_to(&other).is_some())
             });
 
-            let door_tiles = match connection.direction {
+            let (door, door_tiles) = match connection.direction {
                 Direction::Left => {
                     let js: Vec<_> = shared_cells.map(|cell| cell.j).collect();
                     let min_j = js.iter().min().unwrap();
@@ -1548,16 +1665,28 @@ fn generate_tiles(
 
                     let x = i;
                     let y = (min_j * tiles_per_cell + (max_j + 1) * tiles_per_cell - 1) / 2;
-                    vec![Position { x, y }, Position { x, y: y + 1 }]
+                    let door_tiles: Vec<_> = (0..left_wall)
+                        .flat_map(|i| [Position { x: x + i, y }, Position { x: x + i, y: y + 1 }])
+                        .collect();
+                    (Position { x: x - 1, y }, door_tiles)
                 }
                 Direction::Right => {
                     let js: Vec<_> = shared_cells.map(|cell| cell.j).collect();
                     let min_j = js.iter().min().unwrap();
                     let max_j = js.iter().max().unwrap();
 
-                    let x = i + width - 1;
+                    let x = i + width - right_wall;
                     let y = (min_j * tiles_per_cell + (max_j + 1) * tiles_per_cell - 1) / 2;
-                    vec![Position { x, y }, Position { x, y: y + 1 }]
+                    let door_tiles: Vec<_> = (0..right_wall)
+                        .flat_map(|i| [Position { x: x + i, y }, Position { x: x + i, y: y + 1 }])
+                        .collect();
+                    (
+                        Position {
+                            x: x + right_wall - 1,
+                            y,
+                        },
+                        door_tiles,
+                    )
                 }
                 Direction::Up => {
                     let is: Vec<_> = shared_cells.map(|cell| cell.i).collect();
@@ -1566,7 +1695,10 @@ fn generate_tiles(
 
                     let x = (min_i * tiles_per_cell + (max_i + 1) * tiles_per_cell - 1) / 2;
                     let y = j;
-                    vec![Position { x, y }, Position { x: x + 1, y }]
+                    let door_tiles: Vec<_> = (0..top_wall)
+                        .flat_map(|j| [Position { x, y: y + j }, Position { x: x + 1, y: y + j }])
+                        .collect();
+                    (Position { x, y: y - 1 }, door_tiles)
                 }
                 Direction::Down => {
                     let is: Vec<_> = shared_cells.map(|cell| cell.i).collect();
@@ -1574,8 +1706,17 @@ fn generate_tiles(
                     let max_i = is.iter().max().unwrap();
 
                     let x = (min_i * tiles_per_cell + (max_i + 1) * tiles_per_cell - 1) / 2;
-                    let y = j + height - 1;
-                    vec![Position { x, y }, Position { x: x + 1, y }]
+                    let y = j + height - bottom_wall;
+                    let door_tiles: Vec<_> = (0..bottom_wall)
+                        .flat_map(|j| [Position { x, y: y + j }, Position { x: x + 1, y: y + j }])
+                        .collect();
+                    (
+                        Position {
+                            x,
+                            y: y + bottom_wall - 1,
+                        },
+                        door_tiles,
+                    )
                 }
             };
 
@@ -1583,22 +1724,11 @@ fn generate_tiles(
                 tiles[position.x as usize][position.y as usize] = Tile::Floor;
             }
 
-            doors.push(door_tiles[0]);
+            doors.insert(door);
         }
     }
 
-    let doors = doors
-        .iter()
-        .filter(|position| {
-            !doors.iter().any(|other| {
-                other.x < position.x && position.x - other.x == 1
-                    || other.y < position.y && position.y - other.y == 1
-            })
-        })
-        .copied()
-        .collect();
-
-    (tiles, doors)
+    (tiles, doors.iter().copied().collect())
 }
 
 // An iterator over all cells in a floor
