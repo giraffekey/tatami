@@ -18,8 +18,8 @@ The library attempts to provide many of the common features found in roguelikes,
 ```rust
 let dungeon = Dungeon::generate();
 
-dungeon.output_as_image("dungeon.png");
-dungeon.output_floor_as_image(0, "floor-1.png");
+dungeon.output_as_image("dungeon.png", "images/spritesheet.png");
+dungeon.output_floor_as_image(0, "floor-1.png", "images/spritesheet.png");
 ```
 
 Example output:

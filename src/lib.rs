@@ -2,7 +2,7 @@
 //!
 //! The library attempts to provide many of the common features found in roguelikes, such as stairs, teleporters, items, enemies and traps. It is intended to be used as a base upon which a fully featured game can be built on.
 
-use image::{imageops::overlay, open, ImageError, Rgb, RgbImage};
+use image::{imageops::overlay, open, ImageError, Rgb, RgbImage, GenericImageView};
 use itertools::Itertools;
 use noise::{NoiseFn, Perlin};
 use num_integer::Roots;
@@ -682,10 +682,10 @@ impl Dungeon {
     }
 
     /// Output an image representation of all floors in the dungeon.
-    pub fn output_as_image<P: AsRef<Path>>(&self, path: P) -> Result<(), ImageError> {
+    pub fn output_as_image<P: AsRef<Path> + Clone + Sync>(&self, path: P, spritesheet: P) -> Result<(), ImageError> {
         const PADDING: u32 = 64;
 
-        let player_image = open("images/player.png").unwrap().into_rgb8();
+        let player_image = open(spritesheet.clone()).unwrap().into_rgb8().view(16, 32, 8, 8).to_image();
 
         let (width, height) = self.params.dimensions;
         let cols = (self.floors.len() as f32).sqrt().ceil() as u32;
@@ -704,7 +704,7 @@ impl Dungeon {
             .map(|i| {
                 let col = *i as u32 % cols;
                 let row = *i as u32 / cols;
-                let floor_image = self.floor_to_image(*i);
+                let floor_image = self.floor_to_image(*i, &spritesheet);
                 (col, row, floor_image)
             })
             .collect();
@@ -735,8 +735,9 @@ impl Dungeon {
         &self,
         floor_number: u32,
         path: P,
+        spritesheet: P,
     ) -> Result<(), ImageError> {
-        let img = self.floor_to_image(floor_number as usize);
+        let img = self.floor_to_image(floor_number as usize, spritesheet);
 
         img.save(path)?;
 
@@ -744,31 +745,32 @@ impl Dungeon {
     }
 
     // Create an image from floor data
-    fn floor_to_image(&self, index: usize) -> RgbImage {
+    fn floor_to_image<P: AsRef<Path>>(&self, index: usize, spritesheet: P) -> RgbImage {
         let floor = &self.floors[index];
         let (width, height) = self.params.dimensions;
 
-        let floor_tile_image = open("images/floor-tile.png").unwrap().into_rgb8();
-        let wall_tile_image = open("images/wall-tile.png").unwrap().into_rgb8();
-        let door_image = open("images/door.png").unwrap().into_rgb8();
-        let stairs_down_image = open("images/stairs-down.png").unwrap().into_rgb8();
-        let stairs_up_image = open("images/stairs-up.png").unwrap().into_rgb8();
-        let teleporter_image = open("images/teleporter.png").unwrap().into_rgb8();
-        let common_item_image = open("images/common-item.png").unwrap().into_rgb8();
-        let uncommon_item_image = open("images/uncommon-item.png").unwrap().into_rgb8();
-        let rare_item_image = open("images/rare-item.png").unwrap().into_rgb8();
-        let epic_item_image = open("images/epic-item.png").unwrap().into_rgb8();
-        let legendary_item_image = open("images/legendary-item.png").unwrap().into_rgb8();
-        let common_enemy_image = open("images/common-enemy.png").unwrap().into_rgb8();
-        let uncommon_enemy_image = open("images/uncommon-enemy.png").unwrap().into_rgb8();
-        let rare_enemy_image = open("images/rare-enemy.png").unwrap().into_rgb8();
-        let epic_enemy_image = open("images/epic-enemy.png").unwrap().into_rgb8();
-        let legendary_enemy_image = open("images/legendary-enemy.png").unwrap().into_rgb8();
-        let common_trap_image = open("images/common-trap.png").unwrap().into_rgb8();
-        let uncommon_trap_image = open("images/uncommon-trap.png").unwrap().into_rgb8();
-        let rare_trap_image = open("images/rare-trap.png").unwrap().into_rgb8();
-        let epic_trap_image = open("images/epic-trap.png").unwrap().into_rgb8();
-        let legendary_trap_image = open("images/legendary-trap.png").unwrap().into_rgb8();
+        let spritesheet = open(spritesheet).unwrap().into_rgb8();
+        let floor_tile_image = spritesheet.view(0, 0, 8, 8).to_image();
+        let wall_tile_image = spritesheet.view(8, 0, 8, 8).to_image();
+        let stairs_down_image = spritesheet.view(16, 0, 8, 8).to_image();
+        let stairs_up_image = spritesheet.view(24, 0, 8, 8).to_image();
+        let teleporter_image = spritesheet.view(32, 0, 8, 8).to_image();
+        let common_item_image = spritesheet.view(0, 8, 8, 8).to_image();
+        let uncommon_item_image = spritesheet.view(8, 8, 8, 8).to_image();
+        let rare_item_image = spritesheet.view(16, 8, 8, 8).to_image();
+        let epic_item_image = spritesheet.view(24, 8, 8, 8).to_image();
+        let legendary_item_image = spritesheet.view(32, 8, 8, 8).to_image();
+        let common_enemy_image = spritesheet.view(0, 16, 8, 8).to_image();
+        let uncommon_enemy_image = spritesheet.view(8, 16, 8, 8).to_image();
+        let rare_enemy_image = spritesheet.view(16, 16, 8, 8).to_image();
+        let epic_enemy_image = spritesheet.view(24, 16, 8, 8).to_image();
+        let legendary_enemy_image = spritesheet.view(32, 16, 8, 8).to_image();
+        let common_trap_image = spritesheet.view(0, 24, 8, 8).to_image();
+        let uncommon_trap_image = spritesheet.view(8, 24, 8, 8).to_image();
+        let rare_trap_image = spritesheet.view(16, 24, 8, 8).to_image();
+        let epic_trap_image = spritesheet.view(24, 24, 8, 8).to_image();
+        let legendary_trap_image = spritesheet.view(32, 24, 8, 8).to_image();
+        let door_image = spritesheet.view(0, 32, 16, 16).to_image();
 
         let width = width * self.params.tiles_per_cell;
         let height = height * self.params.tiles_per_cell;
@@ -1976,14 +1978,14 @@ mod tests {
             num_floors: 9,
             ..GenerateDungeonParams::default()
         });
-        let res = dungeon.output_as_image("images/dungeon.png");
+        let res = dungeon.output_as_image("images/dungeon.png", "images/spritesheet.png");
         assert!(res.is_ok());
     }
 
     #[test]
     fn output_floor_as_image() {
         let dungeon = Dungeon::generate();
-        let res = dungeon.output_floor_as_image(0, "images/floor-1.png");
+        let res = dungeon.output_floor_as_image(0, "images/floor-1.png", "images/spritesheet.png");
         assert!(res.is_ok());
     }
 }
