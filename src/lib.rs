@@ -2,7 +2,7 @@
 //!
 //! The library attempts to provide many of the common features found in roguelikes, such as stairs, teleporters, items, enemies and traps. It is intended to be used as a base upon which a fully featured game can be built on.
 
-use image::{imageops::overlay, open, ImageError, Rgb, RgbImage, GenericImageView};
+use image::{imageops::overlay, open, GenericImageView, ImageError, Rgb, RgbImage};
 use itertools::Itertools;
 use noise::{NoiseFn, Perlin};
 use num_integer::Roots;
@@ -11,6 +11,7 @@ use rand::prelude::*;
 use rand_chacha::ChaCha20Rng;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use std::cmp::{self, Ordering};
 use std::collections::{BinaryHeap, VecDeque};
 use std::path::Path;
@@ -21,7 +22,7 @@ use strum_macros::EnumIter;
 /// The parameters used to generate a dungeon.
 ///
 /// Values can be in units of cells or tiles. Dungeon is first generated on a smaller grid of cells, which are then translated to a larger number of tiles. This is what gives the dungeon its rectangular structure.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct GenerateDungeonParams {
     /// Width and height of dungeon in terms of cells.
     pub dimensions: (u32, u32),
@@ -183,7 +184,7 @@ impl CellRoom {
 }
 
 /// X and Y position of a tile.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Position {
     pub x: u32,
     pub y: u32,
@@ -297,7 +298,9 @@ impl Position {
 }
 
 /// Cardinal directions iterated in clockwise order.
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Deserialize, Serialize, EnumIter,
+)]
 pub enum Direction {
     Up,
     Right,
@@ -318,7 +321,7 @@ impl Direction {
 }
 
 /// Connection from one room to another.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Connection {
     /// ID of the connected to room.
     pub id: u32,
@@ -327,7 +330,7 @@ pub struct Connection {
 }
 
 /// Stairs leading to a different floor.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Stair {
     /// ID of stairs.
     pub id: u32,
@@ -340,7 +343,7 @@ pub struct Stair {
 }
 
 /// Teleporter providing instant transportation to another on the same floor.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Teleporter {
     /// ID of teleporter.
     pub id: u32,
@@ -351,7 +354,7 @@ pub struct Teleporter {
 }
 
 /// An item that can be used to equipped by the player.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Item {
     /// ID of item instance.
     pub id: u32,
@@ -362,7 +365,7 @@ pub struct Item {
 }
 
 /// An enemy that moves toward and attacks the player.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Enemy {
     /// ID of enemy instance.
     pub id: u32,
@@ -373,7 +376,7 @@ pub struct Enemy {
 }
 
 /// A trap that is hidden from the player and creates a negative effect when stepped on.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Trap {
     /// ID of trap instance.
     pub id: u32,
@@ -384,7 +387,7 @@ pub struct Trap {
 }
 
 /// Type of room.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub enum RoomKind {
     /// Generated first using binary space partitioning.
     Main,
@@ -393,8 +396,10 @@ pub enum RoomKind {
 }
 
 /// A traversable room in the dungeon.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Room {
+    /// Params used to generate the room
+    pub params: GenerateDungeonParams,
     /// ID of room.
     pub id: u32,
     /// Type of room (Main or Corridor).
@@ -433,11 +438,11 @@ impl Room {
     }
 
     /// Iterator over all floor tile positions in the room.
-    pub fn positions(&self, wall_dimensions: (u32, u32)) -> impl Iterator<Item = Position> + '_ {
-        let left_wall = (wall_dimensions.0 as f32 / 2.0).floor() as u32;
-        let right_wall = (wall_dimensions.0 as f32 / 2.0).ceil() as u32;
-        let top_wall = (wall_dimensions.1 as f32 / 2.0).floor() as u32;
-        let bottom_wall = (wall_dimensions.1 as f32 / 2.0).ceil() as u32;
+    pub fn positions(&self) -> impl Iterator<Item = Position> + '_ {
+        let left_wall = (self.params.wall_dimensions.0 as f32 / 2.0).floor() as u32;
+        let right_wall = (self.params.wall_dimensions.0 as f32 / 2.0).ceil() as u32;
+        let top_wall = (self.params.wall_dimensions.1 as f32 / 2.0).floor() as u32;
+        let bottom_wall = (self.params.wall_dimensions.1 as f32 / 2.0).ceil() as u32;
 
         (left_wall..self.width - right_wall).flat_map(move |i| {
             (top_wall..self.height - bottom_wall).map(move |j| Position {
@@ -448,11 +453,8 @@ impl Room {
     }
 
     /// Iterator over all empty floor tile positions in the room.
-    pub fn empty_positions(
-        &self,
-        wall_dimensions: (u32, u32),
-    ) -> impl Iterator<Item = Position> + '_ {
-        self.positions(wall_dimensions).filter(|position| {
+    pub fn empty_positions(&self) -> impl Iterator<Item = Position> + '_ {
+        self.positions().filter(|position| {
             !self.stairs.iter().any(|stair| stair.position == *position)
                 && !self
                     .teleporters
@@ -465,9 +467,9 @@ impl Room {
     }
 
     fn from_cell_room(
+        params: GenerateDungeonParams,
         room: &CellRoom,
         floor: u32,
-        tiles_per_cell: u32,
         rooms: &FxHashMap<u32, CellRoom>,
         kept: &FxHashSet<u32>,
     ) -> Self {
@@ -476,11 +478,11 @@ impl Room {
             kind: room.kind,
             floor,
             position: Position {
-                x: room.cell.i * tiles_per_cell,
-                y: room.cell.j * tiles_per_cell,
+                x: room.cell.i * params.tiles_per_cell,
+                y: room.cell.j * params.tiles_per_cell,
             },
-            width: room.width * tiles_per_cell,
-            height: room.height * tiles_per_cell,
+            width: room.width * params.tiles_per_cell,
+            height: room.height * params.tiles_per_cell,
             connections: room
                 .connections
                 .iter()
@@ -496,12 +498,13 @@ impl Room {
             items: Vec::new(),
             enemies: Vec::new(),
             traps: Vec::new(),
+            params,
         }
     }
 }
 
 /// A single tile in the dungeon.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub enum Tile {
     /// Traversable.
     Floor,
@@ -510,7 +513,7 @@ pub enum Tile {
 }
 
 /// A floor of the dungeon.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Floor {
     /// The index of this floor, starting at zero for the top floor.
     pub number: u32,
@@ -518,7 +521,7 @@ pub struct Floor {
     pub tiles: Vec<Vec<Tile>>,
     /// A list of rooms in the floor.
     pub rooms: Vec<Room>,
-    /// Top-left position of all 2x2 doors.
+    /// Top-left position of all doors.
     pub doors: Vec<Position>,
 }
 
@@ -530,7 +533,7 @@ impl Floor {
 }
 
 /// A procedurally generated dungeon, complete with rooms, items and enemies.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Dungeon {
     /// Parameters used to generate the dungeon.
     pub params: GenerateDungeonParams,
@@ -576,7 +579,7 @@ impl Dungeon {
         let mut room_id = 0;
         let mut teleporter_id = 0;
         for i in 0..params.num_floors {
-            let floor = generate_floor(&mut rng, i, &params, &prev_stairs, room_id, teleporter_id);
+            let floor = generate_floor(&mut rng, i, params, &prev_stairs, room_id, teleporter_id);
             prev_stairs = floor
                 .rooms
                 .iter()
@@ -682,19 +685,27 @@ impl Dungeon {
     }
 
     /// Output an image representation of all floors in the dungeon.
-    pub fn output_as_image<P: AsRef<Path> + Clone + Sync>(&self, path: P, spritesheet: P) -> Result<(), ImageError> {
-        const PADDING: u32 = 64;
-
-        let player_image = open(spritesheet.clone()).unwrap().into_rgb8().view(16, 32, 8, 8).to_image();
+    pub fn output_as_image<P: AsRef<Path> + Clone + Sync>(
+        &self,
+        path: P,
+        spritesheet: P,
+        tile_size: u32,
+    ) -> Result<(), ImageError> {
+        let player_image = open(spritesheet.clone())
+            .unwrap()
+            .into_rgb8()
+            .view(tile_size * 2, tile_size * 4, tile_size, tile_size)
+            .to_image();
 
         let (width, height) = self.params.dimensions;
         let cols = (self.floors.len() as f32).sqrt().ceil() as u32;
         let rows = (self.floors.len() as f32 / cols as f32).ceil() as u32;
         let width = (width * self.params.tiles_per_cell) as u32;
         let height = (height * self.params.tiles_per_cell) as u32;
+        let padding = tile_size * 8;
         let mut img = RgbImage::from_pixel(
-            cols * width * 8 + PADDING * (cols - 1),
-            rows * height * 8 + PADDING * (rows - 1),
+            cols * width * tile_size + padding * (cols - 1),
+            rows * height * tile_size + padding * (rows - 1),
             Rgb([255, 255, 255]),
         );
 
@@ -704,7 +715,7 @@ impl Dungeon {
             .map(|i| {
                 let col = *i as u32 % cols;
                 let row = *i as u32 / cols;
-                let floor_image = self.floor_to_image(*i, &spritesheet);
+                let floor_image = self.floor_to_image(*i, &spritesheet, tile_size);
                 (col, row, floor_image)
             })
             .collect();
@@ -713,16 +724,16 @@ impl Dungeon {
             overlay(
                 &mut img,
                 &floor_image,
-                (col * width) as i64 * 8 + (col * PADDING) as i64,
-                (row * height) as i64 * 8 + (row * PADDING) as i64,
+                ((col * width) * tile_size) as i64 + (col * padding) as i64,
+                ((row * height) * tile_size) as i64 + (row * padding) as i64,
             );
         }
 
         overlay(
             &mut img,
             &player_image,
-            self.player_position.x as i64 * 8,
-            self.player_position.y as i64 * 8,
+            (self.player_position.x * tile_size) as i64,
+            (self.player_position.y * tile_size) as i64,
         );
 
         img.save(path)?;
@@ -736,8 +747,9 @@ impl Dungeon {
         floor_number: u32,
         path: P,
         spritesheet: P,
+        tile_size: u32,
     ) -> Result<(), ImageError> {
-        let img = self.floor_to_image(floor_number as usize, spritesheet);
+        let img = self.floor_to_image(floor_number as usize, spritesheet, tile_size);
 
         img.save(path)?;
 
@@ -745,48 +757,53 @@ impl Dungeon {
     }
 
     // Create an image from floor data
-    fn floor_to_image<P: AsRef<Path>>(&self, index: usize, spritesheet: P) -> RgbImage {
+    fn floor_to_image<P: AsRef<Path>>(
+        &self,
+        index: usize,
+        spritesheet: P,
+        tile_size: u32,
+    ) -> RgbImage {
         let floor = &self.floors[index];
         let (width, height) = self.params.dimensions;
 
         let spritesheet = open(spritesheet).unwrap().into_rgb8();
-        let floor_tile_image = spritesheet.view(0, 0, 8, 8).to_image();
-        let wall_tile_image = spritesheet.view(8, 0, 8, 8).to_image();
-        let stairs_down_image = spritesheet.view(16, 0, 8, 8).to_image();
-        let stairs_up_image = spritesheet.view(24, 0, 8, 8).to_image();
-        let teleporter_image = spritesheet.view(32, 0, 8, 8).to_image();
-        let common_item_image = spritesheet.view(0, 8, 8, 8).to_image();
-        let uncommon_item_image = spritesheet.view(8, 8, 8, 8).to_image();
-        let rare_item_image = spritesheet.view(16, 8, 8, 8).to_image();
-        let epic_item_image = spritesheet.view(24, 8, 8, 8).to_image();
-        let legendary_item_image = spritesheet.view(32, 8, 8, 8).to_image();
-        let common_enemy_image = spritesheet.view(0, 16, 8, 8).to_image();
-        let uncommon_enemy_image = spritesheet.view(8, 16, 8, 8).to_image();
-        let rare_enemy_image = spritesheet.view(16, 16, 8, 8).to_image();
-        let epic_enemy_image = spritesheet.view(24, 16, 8, 8).to_image();
-        let legendary_enemy_image = spritesheet.view(32, 16, 8, 8).to_image();
-        let common_trap_image = spritesheet.view(0, 24, 8, 8).to_image();
-        let uncommon_trap_image = spritesheet.view(8, 24, 8, 8).to_image();
-        let rare_trap_image = spritesheet.view(16, 24, 8, 8).to_image();
-        let epic_trap_image = spritesheet.view(24, 24, 8, 8).to_image();
-        let legendary_trap_image = spritesheet.view(32, 24, 8, 8).to_image();
-        let door_image = spritesheet.view(0, 32, 16, 16).to_image();
+        let floor_tile_image = spritesheet.view(0, 0, tile_size, tile_size).to_image();
+        let wall_tile_image = spritesheet.view(tile_size, 0, tile_size, tile_size).to_image();
+        let stairs_down_image = spritesheet.view(tile_size * 2, 0, tile_size, tile_size).to_image();
+        let stairs_up_image = spritesheet.view(tile_size * 3, 0, tile_size, tile_size).to_image();
+        let teleporter_image = spritesheet.view(tile_size * 4, 0, tile_size, tile_size).to_image();
+        let common_item_image = spritesheet.view(0, tile_size, tile_size, tile_size).to_image();
+        let uncommon_item_image = spritesheet.view(tile_size, tile_size, tile_size, tile_size).to_image();
+        let rare_item_image = spritesheet.view(tile_size * 2, tile_size, tile_size, tile_size).to_image();
+        let epic_item_image = spritesheet.view(tile_size * 3, tile_size, tile_size, tile_size).to_image();
+        let legendary_item_image = spritesheet.view(tile_size * 4, tile_size, tile_size, tile_size).to_image();
+        let common_enemy_image = spritesheet.view(0, tile_size * 2, tile_size, tile_size).to_image();
+        let uncommon_enemy_image = spritesheet.view(tile_size, tile_size * 2, tile_size, tile_size).to_image();
+        let rare_enemy_image = spritesheet.view(tile_size * 2, tile_size * 2, tile_size, tile_size).to_image();
+        let epic_enemy_image = spritesheet.view(tile_size * 3, tile_size * 2, tile_size, tile_size).to_image();
+        let legendary_enemy_image = spritesheet.view(tile_size * 4, tile_size * 2, tile_size, tile_size).to_image();
+        let common_trap_image = spritesheet.view(0, tile_size * 3, tile_size, tile_size).to_image();
+        let uncommon_trap_image = spritesheet.view(tile_size, tile_size * 3, tile_size, tile_size).to_image();
+        let rare_trap_image = spritesheet.view(tile_size * 2, tile_size * 3, tile_size, tile_size).to_image();
+        let epic_trap_image = spritesheet.view(tile_size * 3, tile_size * 3, tile_size, tile_size).to_image();
+        let legendary_trap_image = spritesheet.view(tile_size * 4, tile_size * 3, tile_size, tile_size).to_image();
+        let door_image = spritesheet.view(0, tile_size * 4, tile_size * 2, tile_size * 2).to_image();
 
         let width = width * self.params.tiles_per_cell;
         let height = height * self.params.tiles_per_cell;
-        let mut img = RgbImage::new(width as u32 * 8, height as u32 * 8);
+        let mut img = RgbImage::new(width as u32 * tile_size, height as u32 * tile_size);
 
         for x in 0..width {
             for y in 0..height {
                 match floor.tiles[x as usize][y as usize] {
-                    Tile::Floor => overlay(&mut img, &floor_tile_image, x as i64 * 8, y as i64 * 8),
-                    Tile::Wall => overlay(&mut img, &wall_tile_image, x as i64 * 8, y as i64 * 8),
+                    Tile::Floor => overlay(&mut img, &floor_tile_image, (x * tile_size) as i64, (y * tile_size) as i64),
+                    Tile::Wall => overlay(&mut img, &wall_tile_image, (x * tile_size) as i64, (y * tile_size) as i64),
                 }
             }
         }
 
         for pos in &floor.doors {
-            overlay(&mut img, &door_image, pos.x as i64 * 8, pos.y as i64 * 8)
+            overlay(&mut img, &door_image, (pos.x * tile_size) as i64, (pos.y * tile_size) as i64)
         }
 
         for room in &floor.rooms {
@@ -795,15 +812,15 @@ impl Dungeon {
                     overlay(
                         &mut img,
                         &stairs_down_image,
-                        stair.position.x as i64 * 8,
-                        stair.position.y as i64 * 8,
+                        (stair.position.x * tile_size) as i64,
+                        (stair.position.y * tile_size) as i64,
                     );
                 } else {
                     overlay(
                         &mut img,
                         &stairs_up_image,
-                        stair.position.x as i64 * 8,
-                        stair.position.y as i64 * 8,
+                        (stair.position.x * tile_size) as i64,
+                        (stair.position.y * tile_size) as i64,
                     );
                 }
             }
@@ -812,8 +829,8 @@ impl Dungeon {
                 overlay(
                     &mut img,
                     &teleporter_image,
-                    teleporter.position.x as i64 * 8,
-                    teleporter.position.y as i64 * 8,
+                    (teleporter.position.x * tile_size) as i64,
+                    (teleporter.position.y * tile_size) as i64,
                 );
             }
 
@@ -827,36 +844,36 @@ impl Dungeon {
                     overlay(
                         &mut img,
                         &common_item_image,
-                        item.position.x as i64 * 8,
-                        item.position.y as i64 * 8,
+                        (item.position.x * tile_size) as i64,
+                        (item.position.y * tile_size) as i64,
                     );
                 } else if item.rarity <= uncommon_rarity {
                     overlay(
                         &mut img,
                         &uncommon_item_image,
-                        item.position.x as i64 * 8,
-                        item.position.y as i64 * 8,
+                        (item.position.x * tile_size) as i64,
+                        (item.position.y * tile_size) as i64,
                     );
                 } else if item.rarity <= rare_rarity {
                     overlay(
                         &mut img,
                         &rare_item_image,
-                        item.position.x as i64 * 8,
-                        item.position.y as i64 * 8,
+                        (item.position.x * tile_size) as i64,
+                        (item.position.y * tile_size) as i64,
                     );
                 } else if item.rarity <= epic_rarity {
                     overlay(
                         &mut img,
                         &epic_item_image,
-                        item.position.x as i64 * 8,
-                        item.position.y as i64 * 8,
+                        (item.position.x * tile_size) as i64,
+                        (item.position.y * tile_size) as i64,
                     );
                 } else {
                     overlay(
                         &mut img,
                         &legendary_item_image,
-                        item.position.x as i64 * 8,
-                        item.position.y as i64 * 8,
+                        (item.position.x * tile_size) as i64,
+                        (item.position.y * tile_size) as i64,
                     );
                 }
             }
@@ -871,36 +888,36 @@ impl Dungeon {
                     overlay(
                         &mut img,
                         &common_enemy_image,
-                        enemy.position.x as i64 * 8,
-                        enemy.position.y as i64 * 8,
+                        (enemy.position.x * tile_size) as i64,
+                        (enemy.position.y * tile_size) as i64,
                     );
                 } else if enemy.difficulty <= uncommon_difficulty {
                     overlay(
                         &mut img,
                         &uncommon_enemy_image,
-                        enemy.position.x as i64 * 8,
-                        enemy.position.y as i64 * 8,
+                        (enemy.position.x * tile_size) as i64,
+                        (enemy.position.y * tile_size) as i64,
                     );
                 } else if enemy.difficulty <= rare_difficulty {
                     overlay(
                         &mut img,
                         &rare_enemy_image,
-                        enemy.position.x as i64 * 8,
-                        enemy.position.y as i64 * 8,
+                        (enemy.position.x * tile_size) as i64,
+                        (enemy.position.y * tile_size) as i64,
                     );
                 } else if enemy.difficulty <= epic_difficulty {
                     overlay(
                         &mut img,
                         &epic_enemy_image,
-                        enemy.position.x as i64 * 8,
-                        enemy.position.y as i64 * 8,
+                        (enemy.position.x * tile_size) as i64,
+                        (enemy.position.y * tile_size) as i64,
                     );
                 } else {
                     overlay(
                         &mut img,
                         &legendary_enemy_image,
-                        enemy.position.x as i64 * 8,
-                        enemy.position.y as i64 * 8,
+                        (enemy.position.x * tile_size) as i64,
+                        (enemy.position.y * tile_size) as i64,
                     );
                 }
             }
@@ -915,36 +932,36 @@ impl Dungeon {
                     overlay(
                         &mut img,
                         &common_trap_image,
-                        trap.position.x as i64 * 8,
-                        trap.position.y as i64 * 8,
+                        (trap.position.x * tile_size) as i64,
+                        (trap.position.y * tile_size) as i64,
                     );
                 } else if trap.difficulty <= uncommon_difficulty {
                     overlay(
                         &mut img,
                         &uncommon_trap_image,
-                        trap.position.x as i64 * 8,
-                        trap.position.y as i64 * 8,
+                        (trap.position.x * tile_size) as i64,
+                        (trap.position.y * tile_size) as i64,
                     );
                 } else if trap.difficulty <= rare_difficulty {
                     overlay(
                         &mut img,
                         &rare_trap_image,
-                        trap.position.x as i64 * 8,
-                        trap.position.y as i64 * 8,
+                        (trap.position.x * tile_size) as i64,
+                        (trap.position.y * tile_size) as i64,
                     );
                 } else if trap.difficulty <= epic_difficulty {
                     overlay(
                         &mut img,
                         &epic_trap_image,
-                        trap.position.x as i64 * 8,
-                        trap.position.y as i64 * 8,
+                        (trap.position.x * tile_size) as i64,
+                        (trap.position.y * tile_size) as i64,
                     );
                 } else {
                     overlay(
                         &mut img,
                         &legendary_trap_image,
-                        trap.position.x as i64 * 8,
-                        trap.position.y as i64 * 8,
+                        (trap.position.x * tile_size) as i64,
+                        (trap.position.y * tile_size) as i64,
                     );
                 }
             }
@@ -958,7 +975,7 @@ impl Dungeon {
 fn generate_floor<R: Rng>(
     rng: &mut R,
     floor_number: u32,
-    params: &GenerateDungeonParams,
+    params: GenerateDungeonParams,
     prev_stairs: &[Stair],
     room_id: u32,
     teleporter_id: u32,
@@ -1025,18 +1042,13 @@ fn generate_floor<R: Rng>(
             let mut rooms: Vec<_> = rooms
                 .values()
                 .filter(|room| room.kind == RoomKind::Main || kept.contains(&room.id))
-                .map(|room| {
-                    Room::from_cell_room(room, floor_number, params.tiles_per_cell, &rooms, &kept)
-                })
+                .map(|room| Room::from_cell_room(params, room, floor_number, &rooms, &kept))
                 .collect();
 
             let last_stair_id = prev_stairs.iter().map(|stair| stair.id).max().unwrap_or(0);
             for (i, stair) in prev_stairs.iter().enumerate() {
                 for room in &mut rooms {
-                    if room
-                        .positions(params.wall_dimensions)
-                        .contains(&stair.position)
-                    {
+                    if room.positions().contains(&stair.position) {
                         room.stairs.push(Stair {
                             id: last_stair_id + i as u32,
                             position: stair.position,
@@ -1053,10 +1065,7 @@ fn generate_floor<R: Rng>(
                 rng.gen_range(params.min_stairs_per_floor..=params.max_stairs_per_floor);
             for i in 0..num_stairs {
                 let room = rooms.choose_mut(rng).unwrap();
-                let position = room
-                    .empty_positions(params.wall_dimensions)
-                    .choose(rng)
-                    .unwrap();
+                let position = room.empty_positions().choose(rng).unwrap();
                 room.stairs.push(Stair {
                     id: last_stair_id + i,
                     position,
@@ -1073,10 +1082,7 @@ fn generate_floor<R: Rng>(
 
                 for (id, connected) in [(id1, id2), (id2, id1)] {
                     let room = rooms.choose_mut(rng).unwrap();
-                    let position = room
-                        .empty_positions(params.wall_dimensions)
-                        .choose(rng)
-                        .unwrap();
+                    let position = room.empty_positions().choose(rng).unwrap();
                     room.teleporters.push(Teleporter {
                         id,
                         position,
@@ -1138,10 +1144,7 @@ fn populate_room<R: Rng>(
     };
 
     for _ in 0..num_items {
-        let position = room
-            .empty_positions(params.wall_dimensions)
-            .choose(rng)
-            .unwrap();
+        let position = room.empty_positions().choose(rng).unwrap();
 
         let item_rarity_noise = get_room_noise(room, item_rarity_map, width, height);
         let rarity = weighted_random(
@@ -1176,10 +1179,7 @@ fn populate_room<R: Rng>(
     };
 
     for _ in 0..num_enemies {
-        let position = room
-            .empty_positions(params.wall_dimensions)
-            .choose(rng)
-            .unwrap();
+        let position = room.empty_positions().choose(rng).unwrap();
 
         let enemy_difficulty_noise = get_room_noise(room, &enemy_difficulty_map, width, height);
         let difficulty = weighted_random(
@@ -1214,10 +1214,7 @@ fn populate_room<R: Rng>(
     };
 
     for _ in 0..num_traps {
-        let position = room
-            .empty_positions(params.wall_dimensions)
-            .choose(rng)
-            .unwrap();
+        let position = room.empty_positions().choose(rng).unwrap();
 
         let trap_difficulty_noise = get_room_noise(room, trap_difficulty_map, width, height);
         let difficulty = weighted_random(
@@ -1978,14 +1975,22 @@ mod tests {
             num_floors: 9,
             ..GenerateDungeonParams::default()
         });
-        let res = dungeon.output_as_image("images/dungeon.png", "images/spritesheet.png");
+        let res = dungeon.output_as_image("images/dungeon.png", "images/spritesheet.png", 8);
         assert!(res.is_ok());
     }
 
     #[test]
     fn output_floor_as_image() {
-        let dungeon = Dungeon::generate();
-        let res = dungeon.output_floor_as_image(0, "images/floor-1.png", "images/spritesheet.png");
+        let dungeon = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (16, 16),
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (2, 2),
+            ..GenerateDungeonParams::default()
+        });
+        // let res = dungeon.output_floor_as_image(0, "images/floor-1.png", "images/spritesheet.png", 8);
+        let res = dungeon.output_floor_as_image(0, "images/floor-1.png", "spritesheet.png", 1);
         assert!(res.is_ok());
     }
 }

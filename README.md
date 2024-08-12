@@ -11,6 +11,8 @@ Tatami is a roguelike dungeon generation algorithm that creates a multi-floor du
 
 The library attempts to provide many of the common features found in roguelikes, such as stairs, teleporters, items, enemies and traps. It is intended to be used as a base upon which a fully featured game can be built on.
 
+You can find a tutorial on how to use it [here](https://masterofgiraffe.com/blog/dungeon-generation-tutorial-rust/).
+
 ## Examples
 
 ### Output an image of a generated dungeon
@@ -18,8 +20,8 @@ The library attempts to provide many of the common features found in roguelikes,
 ```rust
 let dungeon = Dungeon::generate();
 
-dungeon.output_as_image("dungeon.png", "images/spritesheet.png");
-dungeon.output_floor_as_image(0, "floor-1.png", "images/spritesheet.png");
+dungeon.output_as_image("dungeon.png", "images/spritesheet.png", 8);
+dungeon.output_floor_as_image(0, "floor-1.png", "images/spritesheet.png", 8);
 ```
 
 Example output:
