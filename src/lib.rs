@@ -149,7 +149,16 @@ impl Cell {
     }
 }
 
-// A room in the mock-up floor
+/// A connection in the mock-up.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct CellConnection {
+    /// ID of the connected to room.
+    pub id: u32,
+    /// Direction the connected to room is in.
+    pub direction: Direction,
+}
+
+// A room in the mock-up.
 #[derive(Debug, Clone)]
 struct CellRoom {
     pub id: u32,
@@ -157,7 +166,7 @@ struct CellRoom {
     pub cell: Cell,
     pub width: u32,
     pub height: u32,
-    pub connections: Vec<Connection>,
+    pub connections: Vec<CellConnection>,
 }
 
 impl CellRoom {
@@ -327,6 +336,8 @@ pub struct Connection {
     pub id: u32,
     /// Direction the connected to room is in.
     pub direction: Direction,
+    /// Top-left position of the door connecting the room.
+    pub door: Position,
 }
 
 /// Stairs leading to a different floor.
@@ -414,8 +425,6 @@ pub struct Room {
     pub height: u32,
     /// Each room is connected to at least one other room by a door.
     pub connections: Vec<Connection>,
-    /// Top-left position of all doors in the room.
-    pub doors: Vec<Position>,
     /// Difficulty value of the room. Based on how far the room is from the starting room.
     pub difficulty: f32,
     /// List of stairs in the room.
@@ -474,7 +483,7 @@ impl Room {
         floor: u32,
         rooms: &FxHashMap<u32, CellRoom>,
         kept: &FxHashSet<u32>,
-        doors: &FxHashMap<u32, Vec<Position>>,
+        doors: &FxHashMap<(u32, u32), Position>,
     ) -> Self {
         Self {
             id: room.id,
@@ -493,9 +502,12 @@ impl Room {
                     rooms.get(&connection.id).unwrap().kind == RoomKind::Main
                         || kept.contains(&connection.id)
                 })
-                .copied()
+                .map(|connection| Connection {
+                    id: connection.id,
+                    direction: connection.direction,
+                    door: doors[&(room.id, connection.id)],
+                })
                 .collect(),
-            doors: doors[&room.id].clone(),
             difficulty: 0.0,
             stairs: Vec::new(),
             teleporters: Vec::new(),
@@ -855,12 +867,12 @@ impl Dungeon {
         }
 
         for room in &floor.rooms {
-            for pos in &room.doors {
+            for connection in &room.connections {
                 overlay(
                     &mut img,
                     &door_image,
-                    (pos.x * tile_size) as i64,
-                    (pos.y * tile_size) as i64,
+                    (connection.door.x * tile_size) as i64,
+                    (connection.door.y * tile_size) as i64,
                 )
             }
 
@@ -1569,7 +1581,7 @@ fn connect_corridors<R: Rng>(rng: &mut R, rooms: &mut FxHashMap<u32, CellRoom>) 
 
         for connection in connections.iter().take(num_connections) {
             let connected = rooms.get_mut(&connection.id).unwrap();
-            connected.connections.push(Connection {
+            connected.connections.push(CellConnection {
                 id,
                 direction: connection.direction.opposite(),
             });
@@ -1669,7 +1681,7 @@ fn generate_tiles(
     height: u32,
     tiles_per_cell: u32,
     wall_dimensions: (u32, u32),
-) -> (Vec<Vec<Tile>>, FxHashMap<u32, Vec<Position>>) {
+) -> (Vec<Vec<Tile>>, FxHashMap<(u32, u32), Position>) {
     let mut tiles = Vec::with_capacity((width * tiles_per_cell) as usize);
     for x in 0..width * tiles_per_cell {
         tiles.push(Vec::with_capacity((height * tiles_per_cell) as usize));
@@ -1700,7 +1712,6 @@ fn generate_tiles(
             }
         }
 
-        let mut room_doors = Vec::new();
         for connection in &room.connections {
             let connected = rooms.get(&connection.id).unwrap();
             if connected.kind == RoomKind::Corridor && !kept.contains(&connection.id) {
@@ -1780,10 +1791,8 @@ fn generate_tiles(
                 tiles[position.x as usize][position.y as usize] = Tile::Floor;
             }
 
-            room_doors.push(door);
+            doors.insert((room.id, connection.id), door);
         }
-
-        doors.insert(room.id, room_doors);
     }
 
     (tiles, doors)
@@ -1798,11 +1807,11 @@ fn cells(width: u32, height: u32) -> impl Iterator<Item = Cell> {
 fn neighbors(
     room: &CellRoom,
     rooms: &FxHashMap<u32, CellRoom>,
-) -> impl Iterator<Item = Connection> {
+) -> impl Iterator<Item = CellConnection> {
     rooms
         .values()
         .filter_map(|other| match room.direction_to(other) {
-            Some(direction) if room.id != other.id => Some(Connection {
+            Some(direction) if room.id != other.id => Some(CellConnection {
                 id: other.id,
                 direction,
             }),
