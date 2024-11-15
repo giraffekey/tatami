@@ -414,6 +414,8 @@ pub struct Room {
     pub height: u32,
     /// Each room is connected to at least one other room by a door.
     pub connections: Vec<Connection>,
+    /// Top-left position of all doors in the room.
+    pub doors: Vec<Position>,
     /// Difficulty value of the room. Based on how far the room is from the starting room.
     pub difficulty: f32,
     /// List of stairs in the room.
@@ -472,6 +474,7 @@ impl Room {
         floor: u32,
         rooms: &FxHashMap<u32, CellRoom>,
         kept: &FxHashSet<u32>,
+        doors: &FxHashMap<u32, Vec<Position>>,
     ) -> Self {
         Self {
             id: room.id,
@@ -492,6 +495,7 @@ impl Room {
                 })
                 .copied()
                 .collect(),
+            doors: doors[&room.id].clone(),
             difficulty: 0.0,
             stairs: Vec::new(),
             teleporters: Vec::new(),
@@ -517,12 +521,10 @@ pub enum Tile {
 pub struct Floor {
     /// The index of this floor, starting at zero for the top floor.
     pub number: u32,
-    /// A list of tiles in the floor.
+    /// The list of tiles in the floor.
     pub tiles: Vec<Vec<Tile>>,
-    /// A list of rooms in the floor.
+    /// The list of rooms in the floor.
     pub rooms: Vec<Room>,
-    /// Top-left position of all doors.
-    pub doors: Vec<Position>,
 }
 
 impl Floor {
@@ -768,26 +770,66 @@ impl Dungeon {
 
         let spritesheet = open(spritesheet).unwrap().into_rgb8();
         let floor_tile_image = spritesheet.view(0, 0, tile_size, tile_size).to_image();
-        let wall_tile_image = spritesheet.view(tile_size, 0, tile_size, tile_size).to_image();
-        let stairs_down_image = spritesheet.view(tile_size * 2, 0, tile_size, tile_size).to_image();
-        let stairs_up_image = spritesheet.view(tile_size * 3, 0, tile_size, tile_size).to_image();
-        let teleporter_image = spritesheet.view(tile_size * 4, 0, tile_size, tile_size).to_image();
-        let common_item_image = spritesheet.view(0, tile_size, tile_size, tile_size).to_image();
-        let uncommon_item_image = spritesheet.view(tile_size, tile_size, tile_size, tile_size).to_image();
-        let rare_item_image = spritesheet.view(tile_size * 2, tile_size, tile_size, tile_size).to_image();
-        let epic_item_image = spritesheet.view(tile_size * 3, tile_size, tile_size, tile_size).to_image();
-        let legendary_item_image = spritesheet.view(tile_size * 4, tile_size, tile_size, tile_size).to_image();
-        let common_enemy_image = spritesheet.view(0, tile_size * 2, tile_size, tile_size).to_image();
-        let uncommon_enemy_image = spritesheet.view(tile_size, tile_size * 2, tile_size, tile_size).to_image();
-        let rare_enemy_image = spritesheet.view(tile_size * 2, tile_size * 2, tile_size, tile_size).to_image();
-        let epic_enemy_image = spritesheet.view(tile_size * 3, tile_size * 2, tile_size, tile_size).to_image();
-        let legendary_enemy_image = spritesheet.view(tile_size * 4, tile_size * 2, tile_size, tile_size).to_image();
-        let common_trap_image = spritesheet.view(0, tile_size * 3, tile_size, tile_size).to_image();
-        let uncommon_trap_image = spritesheet.view(tile_size, tile_size * 3, tile_size, tile_size).to_image();
-        let rare_trap_image = spritesheet.view(tile_size * 2, tile_size * 3, tile_size, tile_size).to_image();
-        let epic_trap_image = spritesheet.view(tile_size * 3, tile_size * 3, tile_size, tile_size).to_image();
-        let legendary_trap_image = spritesheet.view(tile_size * 4, tile_size * 3, tile_size, tile_size).to_image();
-        let door_image = spritesheet.view(0, tile_size * 4, tile_size * 2, tile_size * 2).to_image();
+        let wall_tile_image = spritesheet
+            .view(tile_size, 0, tile_size, tile_size)
+            .to_image();
+        let stairs_down_image = spritesheet
+            .view(tile_size * 2, 0, tile_size, tile_size)
+            .to_image();
+        let stairs_up_image = spritesheet
+            .view(tile_size * 3, 0, tile_size, tile_size)
+            .to_image();
+        let teleporter_image = spritesheet
+            .view(tile_size * 4, 0, tile_size, tile_size)
+            .to_image();
+        let common_item_image = spritesheet
+            .view(0, tile_size, tile_size, tile_size)
+            .to_image();
+        let uncommon_item_image = spritesheet
+            .view(tile_size, tile_size, tile_size, tile_size)
+            .to_image();
+        let rare_item_image = spritesheet
+            .view(tile_size * 2, tile_size, tile_size, tile_size)
+            .to_image();
+        let epic_item_image = spritesheet
+            .view(tile_size * 3, tile_size, tile_size, tile_size)
+            .to_image();
+        let legendary_item_image = spritesheet
+            .view(tile_size * 4, tile_size, tile_size, tile_size)
+            .to_image();
+        let common_enemy_image = spritesheet
+            .view(0, tile_size * 2, tile_size, tile_size)
+            .to_image();
+        let uncommon_enemy_image = spritesheet
+            .view(tile_size, tile_size * 2, tile_size, tile_size)
+            .to_image();
+        let rare_enemy_image = spritesheet
+            .view(tile_size * 2, tile_size * 2, tile_size, tile_size)
+            .to_image();
+        let epic_enemy_image = spritesheet
+            .view(tile_size * 3, tile_size * 2, tile_size, tile_size)
+            .to_image();
+        let legendary_enemy_image = spritesheet
+            .view(tile_size * 4, tile_size * 2, tile_size, tile_size)
+            .to_image();
+        let common_trap_image = spritesheet
+            .view(0, tile_size * 3, tile_size, tile_size)
+            .to_image();
+        let uncommon_trap_image = spritesheet
+            .view(tile_size, tile_size * 3, tile_size, tile_size)
+            .to_image();
+        let rare_trap_image = spritesheet
+            .view(tile_size * 2, tile_size * 3, tile_size, tile_size)
+            .to_image();
+        let epic_trap_image = spritesheet
+            .view(tile_size * 3, tile_size * 3, tile_size, tile_size)
+            .to_image();
+        let legendary_trap_image = spritesheet
+            .view(tile_size * 4, tile_size * 3, tile_size, tile_size)
+            .to_image();
+        let door_image = spritesheet
+            .view(0, tile_size * 4, tile_size * 2, tile_size * 2)
+            .to_image();
 
         let width = width * self.params.tiles_per_cell;
         let height = height * self.params.tiles_per_cell;
@@ -796,17 +838,32 @@ impl Dungeon {
         for x in 0..width {
             for y in 0..height {
                 match floor.tiles[x as usize][y as usize] {
-                    Tile::Floor => overlay(&mut img, &floor_tile_image, (x * tile_size) as i64, (y * tile_size) as i64),
-                    Tile::Wall => overlay(&mut img, &wall_tile_image, (x * tile_size) as i64, (y * tile_size) as i64),
+                    Tile::Floor => overlay(
+                        &mut img,
+                        &floor_tile_image,
+                        (x * tile_size) as i64,
+                        (y * tile_size) as i64,
+                    ),
+                    Tile::Wall => overlay(
+                        &mut img,
+                        &wall_tile_image,
+                        (x * tile_size) as i64,
+                        (y * tile_size) as i64,
+                    ),
                 }
             }
         }
 
-        for pos in &floor.doors {
-            overlay(&mut img, &door_image, (pos.x * tile_size) as i64, (pos.y * tile_size) as i64)
-        }
-
         for room in &floor.rooms {
+            for pos in &room.doors {
+                overlay(
+                    &mut img,
+                    &door_image,
+                    (pos.x * tile_size) as i64,
+                    (pos.y * tile_size) as i64,
+                )
+            }
+
             for stair in &room.stairs {
                 if stair.downwards {
                     overlay(
@@ -1042,7 +1099,7 @@ fn generate_floor<R: Rng>(
             let mut rooms: Vec<_> = rooms
                 .values()
                 .filter(|room| room.kind == RoomKind::Main || kept.contains(&room.id))
-                .map(|room| Room::from_cell_room(params, room, floor_number, &rooms, &kept))
+                .map(|room| Room::from_cell_room(params, room, floor_number, &rooms, &kept, &doors))
                 .collect();
 
             let last_stair_id = prev_stairs.iter().map(|stair| stair.id).max().unwrap_or(0);
@@ -1095,7 +1152,6 @@ fn generate_floor<R: Rng>(
                 number: floor_number,
                 tiles,
                 rooms,
-                doors,
             };
         }
     }
@@ -1613,7 +1669,7 @@ fn generate_tiles(
     height: u32,
     tiles_per_cell: u32,
     wall_dimensions: (u32, u32),
-) -> (Vec<Vec<Tile>>, Vec<Position>) {
+) -> (Vec<Vec<Tile>>, FxHashMap<u32, Vec<Position>>) {
     let mut tiles = Vec::with_capacity((width * tiles_per_cell) as usize);
     for x in 0..width * tiles_per_cell {
         tiles.push(Vec::with_capacity((height * tiles_per_cell) as usize));
@@ -1622,7 +1678,7 @@ fn generate_tiles(
         }
     }
 
-    let mut doors = FxHashSet::default();
+    let mut doors = FxHashMap::default();
     for room in rooms.values() {
         if room.kind == RoomKind::Corridor && !kept.contains(&room.id) {
             continue;
@@ -1644,6 +1700,7 @@ fn generate_tiles(
             }
         }
 
+        let mut room_doors = Vec::new();
         for connection in &room.connections {
             let connected = rooms.get(&connection.id).unwrap();
             if connected.kind == RoomKind::Corridor && !kept.contains(&connection.id) {
@@ -1723,11 +1780,13 @@ fn generate_tiles(
                 tiles[position.x as usize][position.y as usize] = Tile::Floor;
             }
 
-            doors.insert(door);
+            room_doors.push(door);
         }
+
+        doors.insert(room.id, room_doors);
     }
 
-    (tiles, doors.iter().copied().collect())
+    (tiles, doors)
 }
 
 // An iterator over all cells in a floor
@@ -1989,8 +2048,8 @@ mod tests {
             max_room_dimensions: (2, 2),
             ..GenerateDungeonParams::default()
         });
-        // let res = dungeon.output_floor_as_image(0, "images/floor-1.png", "images/spritesheet.png", 8);
-        let res = dungeon.output_floor_as_image(0, "images/floor-1.png", "spritesheet.png", 1);
+        let res =
+            dungeon.output_floor_as_image(0, "images/floor-1.png", "images/spritesheet.png", 8);
         assert!(res.is_ok());
     }
 }
