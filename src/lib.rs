@@ -38,6 +38,8 @@ pub struct GenerateDungeonParams {
     pub min_room_dimensions: (u32, u32),
     /// Maximum dimensions in cells for main rooms.
     pub max_room_dimensions: (u32, u32),
+    /// Whether or not main rooms can connect directly with each other. If false, connections require a corridor in between.
+    pub adjacent_rooms_allowed: bool,
     /// Minimum dimensions in cells for corridors.
     pub min_corridor_dimensions: (u32, u32),
     /// Maximum dimensions in cells for corridors.
@@ -98,6 +100,7 @@ impl Default for GenerateDungeonParams {
             max_rooms_per_floor: 16,
             min_room_dimensions: (2, 2),
             max_room_dimensions: (4, 4),
+            adjacent_rooms_allowed: false,
             min_corridor_dimensions: (1, 1),
             max_corridor_dimensions: (8, 8),
             wall_dimensions: (2, 2),
@@ -1077,6 +1080,7 @@ fn generate_floor<R: Rng>(
             num_rooms,
             params.min_room_dimensions,
             params.max_room_dimensions,
+            params.adjacent_rooms_allowed,
         );
         rooms.extend(generate_corridors(
             &mut grid,
@@ -1311,6 +1315,7 @@ fn generate_main_rooms<R: Rng>(
     num_rooms: u32,
     min_room_dimensions: (u32, u32),
     max_room_dimensions: (u32, u32),
+    adjacent_rooms_allowed: bool,
 ) -> FxHashMap<u32, CellRoom> {
     let mut n = 1;
     let mut depth = 0;
@@ -1331,8 +1336,17 @@ fn generate_main_rooms<R: Rng>(
             let id = room_id + index as u32;
             let room_width = rng.gen_range(min_room_dimensions.0..=max_room_dimensions.0);
             let room_height = rng.gen_range(min_room_dimensions.1..=max_room_dimensions.1);
-            let i = rng.gen_range(i + 1..i + width - 1 - room_width);
-            let j = rng.gen_range(j + 1..j + height - 1 - room_height);
+
+            let (i, j) = if adjacent_rooms_allowed {
+                let i = rng.gen_range(*i..=i + width - room_width);
+                let j = rng.gen_range(*j..=j + height - room_height);
+                (i, j)
+            } else {
+                let i = rng.gen_range(i + 1..=i + width - 1 - room_width);
+                let j = rng.gen_range(j + 1..=j + height - 1 - room_height);
+                (i, j)
+            };
+
             let room = CellRoom {
                 id,
                 kind: RoomKind::Main,
