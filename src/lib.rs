@@ -412,8 +412,6 @@ pub enum RoomKind {
 /// A traversable room in the dungeon.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Room {
-    /// Params used to generate the room
-    pub params: GenerateDungeonParams,
     /// ID of room.
     pub id: u32,
     /// Type of room (Main or Corridor).
@@ -440,6 +438,8 @@ pub struct Room {
     pub enemies: Vec<Enemy>,
     /// List of traps in the room.
     pub traps: Vec<Trap>,
+    /// Dimensions in tiles for walls.
+    pub wall_dimensions: (u32, u32),
 }
 
 impl Room {
@@ -453,10 +453,10 @@ impl Room {
 
     /// Iterator over all floor tile positions in the room.
     pub fn positions(&self) -> impl Iterator<Item = Position> + '_ {
-        let left_wall = (self.params.wall_dimensions.0 as f32 / 2.0).floor() as u32;
-        let right_wall = (self.params.wall_dimensions.0 as f32 / 2.0).ceil() as u32;
-        let top_wall = (self.params.wall_dimensions.1 as f32 / 2.0).floor() as u32;
-        let bottom_wall = (self.params.wall_dimensions.1 as f32 / 2.0).ceil() as u32;
+        let left_wall = (self.wall_dimensions.0 as f32 / 2.0).floor() as u32;
+        let right_wall = (self.wall_dimensions.0 as f32 / 2.0).ceil() as u32;
+        let top_wall = (self.wall_dimensions.1 as f32 / 2.0).floor() as u32;
+        let bottom_wall = (self.wall_dimensions.1 as f32 / 2.0).ceil() as u32;
 
         (left_wall..self.width - right_wall).flat_map(move |i| {
             (top_wall..self.height - bottom_wall).map(move |j| Position {
@@ -481,7 +481,7 @@ impl Room {
     }
 
     fn from_cell_room(
-        params: GenerateDungeonParams,
+        params: &GenerateDungeonParams,
         room: &CellRoom,
         floor: u32,
         rooms: &FxHashMap<u32, CellRoom>,
@@ -517,7 +517,7 @@ impl Room {
             items: Vec::new(),
             enemies: Vec::new(),
             traps: Vec::new(),
-            params,
+            wall_dimensions: params.wall_dimensions,
         }
     }
 }
@@ -562,9 +562,26 @@ pub struct Dungeon {
     pub player_position: Position,
 }
 
+/// An issue run into during dungeon generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub enum TatamiError {
+    /// Dungeons must contain at least one floor.
+    NoFloors,
+    /// Floors must contain at least two rooms.
+    NoRooms,
+    /// Walls cannot have widths or heights of zero.
+    NoWalls,
+    /// Rooms cannot have widths or heights of zero.
+    InvalidRoomDimensions,
+    /// The minimum value for a parameter was set to more than the maximum value.
+    MinGreaterThanMax,
+    /// Dimensions of dungeon were insufficient for room partition size. Increase dimensions or decrease either max_rooms_per_floor or max_room_dimensions.
+    TooSmall,
+}
+
 impl Dungeon {
     /// Generate a dungeon with a random seed and default parameters.
-    pub fn generate() -> Self {
+    pub fn generate() -> Result<Self, TatamiError> {
         let mut rng = thread_rng();
         let mut seed = [0u8; 32];
         rng.fill(&mut seed);
@@ -573,12 +590,12 @@ impl Dungeon {
     }
 
     /// Generate a dungeon with default parameters.
-    pub fn generate_with_seed(seed: [u8; 32]) -> Self {
+    pub fn generate_with_seed(seed: [u8; 32]) -> Result<Self, TatamiError> {
         Self::generate_with_seed_and_params(seed, GenerateDungeonParams::default())
     }
 
     /// Generate a dungeon with a random seed.
-    pub fn generate_with_params(params: GenerateDungeonParams) -> Self {
+    pub fn generate_with_params(params: GenerateDungeonParams) -> Result<Self, TatamiError> {
         let mut rng = thread_rng();
         let mut seed = [0u8; 32];
         rng.fill(&mut seed);
@@ -587,8 +604,100 @@ impl Dungeon {
     }
 
     /// Generate a dungeon with the provided seed and parameters.
-    pub fn generate_with_seed_and_params(seed: [u8; 32], params: GenerateDungeonParams) -> Self {
+    pub fn generate_with_seed_and_params(
+        seed: [u8; 32],
+        params: GenerateDungeonParams,
+    ) -> Result<Self, TatamiError> {
+        if params.num_floors == 0 {
+            return Err(TatamiError::NoFloors);
+        }
+
+        if params.min_rooms_per_floor <= 1 || params.max_rooms_per_floor <= 1 {
+            return Err(TatamiError::NoRooms);
+        }
+
+        if params.wall_dimensions.0 == 0 || params.wall_dimensions.1 == 0 {
+            return Err(TatamiError::NoWalls);
+        }
+
+        if params.min_room_dimensions.0 == 0 || params.min_room_dimensions.1 == 0 {
+            return Err(TatamiError::InvalidRoomDimensions);
+        }
+
+        if params.max_room_dimensions.0 == 0 || params.max_room_dimensions.1 == 0 {
+            return Err(TatamiError::InvalidRoomDimensions);
+        }
+
+        if params.min_corridor_dimensions.0 == 0 || params.min_corridor_dimensions.1 == 0 {
+            return Err(TatamiError::InvalidRoomDimensions);
+        }
+
+        if params.max_corridor_dimensions.0 == 0 || params.max_corridor_dimensions.1 == 0 {
+            return Err(TatamiError::InvalidRoomDimensions);
+        }
+
+        if params.min_rooms_per_floor > params.max_rooms_per_floor {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_room_dimensions.0 > params.max_room_dimensions.0 {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_room_dimensions.1 > params.max_room_dimensions.1 {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_corridor_dimensions.0 > params.max_corridor_dimensions.0 {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_corridor_dimensions.1 > params.max_corridor_dimensions.1 {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_stairs_per_floor > params.max_stairs_per_floor {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_teleporters_per_floor > params.max_teleporters_per_floor {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_items_per_room > params.max_items_per_room {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_enemies_per_room > params.max_enemies_per_room {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
+        if params.min_traps_per_room > params.max_traps_per_room {
+            return Err(TatamiError::MinGreaterThanMax);
+        }
+
         let (width, height) = params.dimensions;
+
+        let depth = (params.max_rooms_per_floor as f32).log(2.0).ceil() as u32;
+        let partitions = 2_u32.pow((depth + 1) / 2);
+
+        let partition_width = if params.adjacent_rooms_allowed {
+            width / partitions
+        } else {
+            (width / partitions).checked_sub(2).unwrap_or(0)
+        };
+        let partition_height = if params.adjacent_rooms_allowed {
+            height / partitions
+        } else {
+            (height / partitions).checked_sub(2).unwrap_or(0)
+        };
+
+        if params.max_room_dimensions.0 > partition_width
+            || params.max_room_dimensions.1 > partition_height
+        {
+            return Err(TatamiError::TooSmall);
+        }
+
         let mut rng = ChaCha20Rng::from_seed(seed);
 
         let mut floors: Vec<Floor> = Vec::with_capacity(params.num_floors as usize);
@@ -693,12 +802,12 @@ impl Dungeon {
             })
         });
 
-        Self {
+        Ok(Self {
             params,
             floors,
             starting_room_id,
             player_position,
-        }
+        })
     }
 
     /// Output an image representation of all floors in the dungeon.
@@ -1115,7 +1224,9 @@ fn generate_floor<R: Rng>(
             let mut rooms: Vec<_> = rooms
                 .values()
                 .filter(|room| room.kind == RoomKind::Main || kept.contains(&room.id))
-                .map(|room| Room::from_cell_room(params, room, floor_number, &rooms, &kept, &doors))
+                .map(|room| {
+                    Room::from_cell_room(&params, room, floor_number, &rooms, &kept, &doors)
+                })
                 .collect();
 
             let last_stair_id = prev_stairs.iter().map(|stair| stair.id).max().unwrap_or(0);
@@ -1317,17 +1428,8 @@ fn generate_main_rooms<R: Rng>(
     max_room_dimensions: (u32, u32),
     adjacent_rooms_allowed: bool,
 ) -> FxHashMap<u32, CellRoom> {
-    let mut n = 1;
-    let mut depth = 0;
-    loop {
-        if num_rooms <= n {
-            break;
-        }
-        n *= 2;
-        depth += 1;
-    }
-
     let split_horizontally = rng.gen();
+    let depth = (num_rooms as f32).log(2.0).ceil() as u32;
     let mut partitions = create_partitions(0, 0, width, height, split_horizontally, depth);
     partitions.shuffle(rng);
 
@@ -1423,6 +1525,11 @@ fn generate_corridors<R: Rng>(
             let mut empty_cells: Vec<_> = cells(width, height)
                 .filter(|cell| !grid[cell.i as usize][cell.j as usize])
                 .collect();
+
+            if empty_cells.is_empty() {
+                return FxHashMap::default();
+            }
+
             empty_cells.shuffle(rng);
 
             let empty_cells = &empty_cells[0..cmp::max(empty_cells.len() / 8, 1)];
@@ -2045,7 +2152,7 @@ mod tests {
         let mut elapsed = Duration::from_secs(0);
         for _ in 0..100 {
             let now = Instant::now();
-            Dungeon::generate();
+            assert!(Dungeon::generate().is_ok());
             elapsed += now.elapsed();
         }
         println!("{:?}", elapsed / 100);
@@ -2053,26 +2160,447 @@ mod tests {
 
     #[test]
     fn output_dungeon_as_image() {
-        let dungeon = Dungeon::generate_with_params(GenerateDungeonParams {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
             num_floors: 9,
             ..GenerateDungeonParams::default()
         });
+        assert!(res.is_ok());
+        let dungeon = res.unwrap();
+
         let res = dungeon.output_as_image("images/dungeon.png", "images/spritesheet.png", 8);
         assert!(res.is_ok());
     }
 
     #[test]
     fn output_floor_as_image() {
-        let dungeon = Dungeon::generate_with_params(GenerateDungeonParams {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
             dimensions: (16, 16),
             min_rooms_per_floor: 4,
             max_rooms_per_floor: 4,
             min_room_dimensions: (1, 1),
             max_room_dimensions: (2, 2),
+            adjacent_rooms_allowed: true,
             ..GenerateDungeonParams::default()
         });
+        assert!(res.is_ok());
+        let dungeon = res.unwrap();
+
         let res =
             dungeon.output_floor_as_image(0, "images/floor-1.png", "images/spritesheet.png", 8);
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn error_no_floors() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            num_floors: 0,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoFloors);
+    }
+
+    #[test]
+    fn error_no_rooms() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_rooms_per_floor: 0,
+            max_rooms_per_floor: 0,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoRooms);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_rooms_per_floor: 0,
+            max_rooms_per_floor: 1,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoRooms);
+    }
+
+    #[test]
+    fn error_no_walls() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            wall_dimensions: (0, 0),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoWalls);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            wall_dimensions: (1, 0),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoWalls);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            wall_dimensions: (0, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoWalls);
+    }
+
+    #[test]
+    fn error_invalid_room_dimensions() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (0, 0),
+            max_room_dimensions: (0, 0),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (0, 0),
+            max_room_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (1, 0),
+            max_room_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (0, 1),
+            max_room_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (0, 0),
+            max_corridor_dimensions: (0, 0),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (0, 0),
+            max_corridor_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (1, 0),
+            max_corridor_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (0, 1),
+            max_corridor_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::InvalidRoomDimensions);
+    }
+
+    #[test]
+    fn error_min_greater_than_max() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_rooms_per_floor: 3,
+            max_rooms_per_floor: 2,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (2, 2),
+            max_room_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (1, 2),
+            max_room_dimensions: (2, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_room_dimensions: (2, 1),
+            max_room_dimensions: (1, 2),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (2, 2),
+            max_corridor_dimensions: (1, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (1, 2),
+            max_corridor_dimensions: (2, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_corridor_dimensions: (2, 1),
+            max_corridor_dimensions: (1, 2),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_stairs_per_floor: 2,
+            max_stairs_per_floor: 1,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_teleporters_per_floor: 2,
+            max_teleporters_per_floor: 1,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_items_per_room: 2,
+            max_items_per_room: 1,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_enemies_per_room: 2,
+            max_enemies_per_room: 1,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_traps_per_room: 2,
+            max_traps_per_room: 1,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::MinGreaterThanMax);
+    }
+
+    #[test]
+    fn error_too_small() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (2, 2),
+            num_floors: 1,
+            min_rooms_per_floor: 2,
+            max_rooms_per_floor: 2,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (1, 1),
+            adjacent_rooms_allowed: true,
+            min_stairs_per_floor: 0,
+            max_stairs_per_floor: 0,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_ok());
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (3, 3),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_ok());
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (5, 5),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_ok());
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (16, 16),
+            num_floors: 1,
+            min_rooms_per_floor: 8,
+            max_rooms_per_floor: 8,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (2, 2),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_ok());
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (16, 16),
+            num_floors: 1,
+            min_rooms_per_floor: 8,
+            max_rooms_per_floor: 8,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (4, 4),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_ok());
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 5,
+            max_rooms_per_floor: 5,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (3, 3),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 5,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (3, 3),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (4, 4),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (3, 4),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (4, 3),
+            adjacent_rooms_allowed: false,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 5,
+            max_rooms_per_floor: 5,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (4, 4),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 5,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (4, 4),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (6, 6),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (5, 6),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            dimensions: (10, 10),
+            num_floors: 1,
+            min_rooms_per_floor: 4,
+            max_rooms_per_floor: 4,
+            min_room_dimensions: (1, 1),
+            max_room_dimensions: (6, 5),
+            adjacent_rooms_allowed: true,
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::TooSmall);
     }
 }
