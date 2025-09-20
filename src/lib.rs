@@ -22,7 +22,7 @@ use strum_macros::EnumIter;
 /// The parameters used to generate a dungeon.
 ///
 /// Values can be in units of cells or tiles. Dungeon is first generated on a smaller grid of cells, which are then translated to a larger number of tiles. This is what gives the dungeon its rectangular structure.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub struct GenerateDungeonParams {
     /// Width and height of dungeon in terms of cells.
     pub dimensions: (u32, u32),
@@ -130,7 +130,7 @@ impl Default for GenerateDungeonParams {
 }
 
 // A cell in the mock-up grid
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 struct Cell {
     pub i: u32,
     pub j: u32,
@@ -153,7 +153,7 @@ impl Cell {
 }
 
 /// A connection in the mock-up.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct CellConnection {
     /// ID of the connected to room.
     pub id: u32,
@@ -162,7 +162,7 @@ pub struct CellConnection {
 }
 
 // A room in the mock-up.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 struct CellRoom {
     pub id: u32,
     pub kind: RoomKind,
@@ -333,7 +333,7 @@ impl Direction {
 }
 
 /// Connection from one room to another.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Connection {
     /// ID of the connected to room.
     pub id: u32,
@@ -344,7 +344,7 @@ pub struct Connection {
 }
 
 /// Stairs leading to a different floor.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Stair {
     /// ID of stairs.
     pub id: u32,
@@ -357,7 +357,7 @@ pub struct Stair {
 }
 
 /// Teleporter providing instant transportation to another on the same floor.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Teleporter {
     /// ID of teleporter.
     pub id: u32,
@@ -368,7 +368,7 @@ pub struct Teleporter {
 }
 
 /// An item that can be used to equipped by the player.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Item {
     /// ID of item instance.
     pub id: u32,
@@ -379,7 +379,7 @@ pub struct Item {
 }
 
 /// An enemy that moves toward and attacks the player.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Enemy {
     /// ID of enemy instance.
     pub id: u32,
@@ -390,7 +390,7 @@ pub struct Enemy {
 }
 
 /// A trap that is hidden from the player and creates a negative effect when stepped on.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Trap {
     /// ID of trap instance.
     pub id: u32,
@@ -401,7 +401,7 @@ pub struct Trap {
 }
 
 /// Type of room.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize, EnumIter)]
 pub enum RoomKind {
     /// Generated first using binary space partitioning.
     Main,
@@ -410,7 +410,7 @@ pub enum RoomKind {
 }
 
 /// A traversable room in the dungeon.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Room {
     /// ID of room.
     pub id: u32,
@@ -523,7 +523,7 @@ impl Room {
 }
 
 /// A single tile in the dungeon.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum Tile {
     /// Traversable.
     Floor,
@@ -532,7 +532,7 @@ pub enum Tile {
 }
 
 /// A floor of the dungeon.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Floor {
     /// The index of this floor, starting at zero for the top floor.
     pub number: u32,
@@ -550,7 +550,7 @@ impl Floor {
 }
 
 /// A procedurally generated dungeon, complete with rooms, items and enemies.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Dungeon {
     /// Parameters used to generate the dungeon.
     pub params: GenerateDungeonParams,
