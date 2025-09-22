@@ -46,6 +46,8 @@ pub struct GenerateDungeonParams {
     pub max_corridor_dimensions: (u32, u32),
     /// Dimensions in tiles for walls.
     pub wall_dimensions: (u32, u32),
+    /// The minimum amount of shared cells required on the x and y axes for a room to be considered a neighbor.
+    pub min_shared_cells: (usize, usize),
     /// This value decreases the likelihood of a corridor having one side much longer than the other.
     pub squareness: f32,
     /// Minimum downward stairs per floor. Number of upward stairs will always be equal to the number of downward stairs in the previous floor.
@@ -104,6 +106,7 @@ impl Default for GenerateDungeonParams {
             min_corridor_dimensions: (1, 1),
             max_corridor_dimensions: (8, 8),
             wall_dimensions: (2, 2),
+            min_shared_cells: (1, 1),
             squareness: 1.0,
             min_stairs_per_floor: 3,
             max_stairs_per_floor: 3,
@@ -186,6 +189,14 @@ impl CellRoom {
                 i: self.cell.i + x,
                 j: self.cell.j + y,
             })
+        })
+    }
+
+    pub fn shared_cells<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = Cell> + 'a {
+        self.cells().filter(|cell| {
+            other
+                .cells()
+                .any(|other| cell.direction_to(&other).is_some())
         })
     }
 
@@ -573,6 +584,8 @@ pub enum TatamiError {
     NoWalls,
     /// Rooms cannot have widths or heights of zero.
     InvalidRoomDimensions,
+    /// Neighboring rooms must have at least one shared cell.
+    NoSharedCells,
     /// The minimum value for a parameter was set to more than the maximum value.
     MinGreaterThanMax,
     /// Dimensions of dungeon were insufficient for room partition size. Increase dimensions or decrease either max_rooms_per_floor or max_room_dimensions.
@@ -618,6 +631,10 @@ impl Dungeon {
 
         if params.wall_dimensions.0 == 0 || params.wall_dimensions.1 == 0 {
             return Err(TatamiError::NoWalls);
+        }
+
+        if params.min_shared_cells.0 == 0 || params.min_shared_cells.1 == 0 {
+            return Err(TatamiError::NoSharedCells);
         }
 
         if params.min_room_dimensions.0 == 0 || params.min_room_dimensions.1 == 0 {
@@ -1204,7 +1221,7 @@ fn generate_floor<R: Rng>(
 
         let mut kept = None;
         for _ in 0..2 {
-            connect_corridors(rng, &mut rooms);
+            connect_corridors(rng, &mut rooms, params.min_shared_cells);
             if let Some(kept_) = connect_rooms(rng, &rooms, &prev_stair_cells) {
                 kept = Some(kept_);
                 break;
@@ -1668,7 +1685,11 @@ fn generate_corridors<R: Rng>(
 }
 
 // Creates connections between all main rooms and corridors
-fn connect_corridors<R: Rng>(rng: &mut R, rooms: &mut FxHashMap<u32, CellRoom>) {
+fn connect_corridors<R: Rng>(
+    rng: &mut R,
+    rooms: &mut FxHashMap<u32, CellRoom>,
+    min_shared_cells: (usize, usize),
+) {
     let mut to_connect: Vec<_> = rooms.keys().copied().collect();
     to_connect.shuffle(rng);
 
@@ -1689,7 +1710,7 @@ fn connect_corridors<R: Rng>(rng: &mut R, rooms: &mut FxHashMap<u32, CellRoom>) 
         };
 
         let room_connections = room.connections.clone();
-        let mut connections = neighbors(&room, &rooms)
+        let mut connections = neighbors(&room, &rooms, min_shared_cells)
             .filter(|connection| {
                 let connected = rooms.get(&connection.id).unwrap();
                 !room_connections
@@ -1839,12 +1860,7 @@ fn generate_tiles(
                 continue;
             }
 
-            let shared_cells = room.cells().filter(|cell| {
-                connected
-                    .cells()
-                    .any(|other| cell.direction_to(&other).is_some())
-            });
-
+            let shared_cells = room.shared_cells(connected);
             let (door, door_tiles) = match connection.direction {
                 Direction::Left => {
                     let js: Vec<_> = shared_cells.map(|cell| cell.j).collect();
@@ -1853,6 +1869,7 @@ fn generate_tiles(
 
                     let x = i;
                     let y = (min_j * tiles_per_cell + (max_j + 1) * tiles_per_cell - 1) / 2;
+
                     let door_tiles: Vec<_> = (0..left_wall)
                         .flat_map(|i| [Position { x: x + i, y }, Position { x: x + i, y: y + 1 }])
                         .collect();
@@ -1865,6 +1882,7 @@ fn generate_tiles(
 
                     let x = i + width - right_wall;
                     let y = (min_j * tiles_per_cell + (max_j + 1) * tiles_per_cell - 1) / 2;
+
                     let door_tiles: Vec<_> = (0..right_wall)
                         .flat_map(|i| [Position { x: x + i, y }, Position { x: x + i, y: y + 1 }])
                         .collect();
@@ -1883,6 +1901,7 @@ fn generate_tiles(
 
                     let x = (min_i * tiles_per_cell + (max_i + 1) * tiles_per_cell - 1) / 2;
                     let y = j;
+
                     let door_tiles: Vec<_> = (0..top_wall)
                         .flat_map(|j| [Position { x, y: y + j }, Position { x: x + 1, y: y + j }])
                         .collect();
@@ -1895,6 +1914,7 @@ fn generate_tiles(
 
                     let x = (min_i * tiles_per_cell + (max_i + 1) * tiles_per_cell - 1) / 2;
                     let y = j + height - bottom_wall;
+
                     let door_tiles: Vec<_> = (0..bottom_wall)
                         .flat_map(|j| [Position { x, y: y + j }, Position { x: x + 1, y: y + j }])
                         .collect();
@@ -1928,14 +1948,29 @@ fn cells(width: u32, height: u32) -> impl Iterator<Item = Cell> {
 fn neighbors(
     room: &CellRoom,
     rooms: &FxHashMap<u32, CellRoom>,
+    min_shared_cells: (usize, usize),
 ) -> impl Iterator<Item = CellConnection> {
     rooms
         .values()
         .filter_map(|other| match room.direction_to(other) {
-            Some(direction) if room.id != other.id => Some(CellConnection {
-                id: other.id,
-                direction,
-            }),
+            Some(direction) if room.id != other.id => {
+                let count = room.shared_cells(other).count();
+                match direction {
+                    Direction::Left | Direction::Right if count >= min_shared_cells.1 => {
+                        Some(CellConnection {
+                            id: other.id,
+                            direction,
+                        })
+                    }
+                    Direction::Up | Direction::Down if count >= min_shared_cells.0 => {
+                        Some(CellConnection {
+                            id: other.id,
+                            direction,
+                        })
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         })
         .sorted_by(|a, b| a.direction.cmp(&b.direction))
@@ -2241,6 +2276,30 @@ mod tests {
         });
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), TatamiError::NoWalls);
+    }
+
+    #[test]
+    fn error_no_shared_cells() {
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_shared_cells: (0, 0),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoSharedCells);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_shared_cells: (1, 0),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoSharedCells);
+
+        let res = Dungeon::generate_with_params(GenerateDungeonParams {
+            min_shared_cells: (0, 1),
+            ..GenerateDungeonParams::default()
+        });
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), TatamiError::NoSharedCells);
     }
 
     #[test]
