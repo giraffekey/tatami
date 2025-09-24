@@ -46,6 +46,8 @@ pub struct GenerateDungeonParams {
     pub max_corridor_dimensions: (u32, u32),
     /// Dimensions in tiles for walls.
     pub wall_dimensions: (u32, u32),
+    /// Offset in tiles for walls.
+    pub wall_offset: (i32, i32),
     /// The minimum amount of shared cells required on the x and y axes for a room to be considered a neighbor.
     pub min_shared_cells: (usize, usize),
     /// This value decreases the likelihood of a corridor having one side much longer than the other.
@@ -106,6 +108,7 @@ impl Default for GenerateDungeonParams {
             min_corridor_dimensions: (1, 1),
             max_corridor_dimensions: (8, 8),
             wall_dimensions: (2, 2),
+            wall_offset: (0, 0),
             min_shared_cells: (1, 1),
             squareness: 1.0,
             min_stairs_per_floor: 3,
@@ -451,6 +454,8 @@ pub struct Room {
     pub traps: Vec<Trap>,
     /// Dimensions in tiles for walls.
     pub wall_dimensions: (u32, u32),
+    /// Offset in tiles for walls.
+    pub wall_offset: (i32, i32),
 }
 
 impl Room {
@@ -464,10 +469,14 @@ impl Room {
 
     /// Iterator over all floor tile positions in the room.
     pub fn positions(&self) -> impl Iterator<Item = Position> + '_ {
-        let left_wall = (self.wall_dimensions.0 as f32 / 2.0).floor() as u32;
-        let right_wall = (self.wall_dimensions.0 as f32 / 2.0).ceil() as u32;
-        let top_wall = (self.wall_dimensions.1 as f32 / 2.0).floor() as u32;
-        let bottom_wall = (self.wall_dimensions.1 as f32 / 2.0).ceil() as u32;
+        let left_wall =
+            (self.wall_dimensions.0 as f32 / 2.0 + self.wall_offset.0 as f32).floor() as u32;
+        let right_wall =
+            (self.wall_dimensions.0 as f32 / 2.0 - self.wall_offset.0 as f32).ceil() as u32;
+        let top_wall =
+            (self.wall_dimensions.1 as f32 / 2.0 + self.wall_offset.1 as f32).floor() as u32;
+        let bottom_wall =
+            (self.wall_dimensions.1 as f32 / 2.0 - self.wall_offset.1 as f32).ceil() as u32;
 
         (left_wall..self.width - right_wall).flat_map(move |i| {
             (top_wall..self.height - bottom_wall).map(move |j| Position {
@@ -529,6 +538,7 @@ impl Room {
             enemies: Vec::new(),
             traps: Vec::new(),
             wall_dimensions: params.wall_dimensions,
+            wall_offset: params.wall_offset,
         }
     }
 }
@@ -1236,6 +1246,7 @@ fn generate_floor<R: Rng>(
                 height,
                 params.tiles_per_cell,
                 params.wall_dimensions,
+                params.wall_offset,
             );
 
             let mut rooms: Vec<_> = rooms
@@ -1823,6 +1834,7 @@ fn generate_tiles(
     height: u32,
     tiles_per_cell: u32,
     wall_dimensions: (u32, u32),
+    wall_offset: (i32, i32),
 ) -> (Vec<Vec<Tile>>, FxHashMap<(u32, u32), Position>) {
     let mut tiles = Vec::with_capacity((width * tiles_per_cell) as usize);
     for x in 0..width * tiles_per_cell {
@@ -1838,10 +1850,10 @@ fn generate_tiles(
             continue;
         }
 
-        let left_wall = (wall_dimensions.0 as f32 / 2.0).floor() as u32;
-        let right_wall = (wall_dimensions.0 as f32 / 2.0).ceil() as u32;
-        let top_wall = (wall_dimensions.1 as f32 / 2.0).floor() as u32;
-        let bottom_wall = (wall_dimensions.1 as f32 / 2.0).ceil() as u32;
+        let left_wall = (wall_dimensions.0 as f32 / 2.0 + wall_offset.0 as f32).floor() as u32;
+        let right_wall = (wall_dimensions.0 as f32 / 2.0 - wall_offset.0 as f32).ceil() as u32;
+        let top_wall = (wall_dimensions.1 as f32 / 2.0 + wall_offset.1 as f32).floor() as u32;
+        let bottom_wall = (wall_dimensions.1 as f32 / 2.0 - wall_offset.1 as f32).ceil() as u32;
 
         let i = room.cell.i * tiles_per_cell;
         let j = room.cell.j * tiles_per_cell;
@@ -2214,6 +2226,8 @@ mod tests {
             max_rooms_per_floor: 4,
             min_room_dimensions: (1, 1),
             max_room_dimensions: (2, 2),
+            wall_dimensions: (2, 3),
+            wall_offset: (0, 1),
             adjacent_rooms_allowed: true,
             ..GenerateDungeonParams::default()
         });
